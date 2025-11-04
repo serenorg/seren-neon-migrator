@@ -27,7 +27,11 @@ pub async fn dump_globals(source_url: &str, output_path: &str) -> Result<()> {
 
 /// Dump schema (DDL) for a specific database
 pub async fn dump_schema(source_url: &str, database: &str, output_path: &str) -> Result<()> {
-    tracing::info!("Dumping schema for database '{}' to {}", database, output_path);
+    tracing::info!(
+        "Dumping schema for database '{}' to {}",
+        database,
+        output_path
+    );
 
     let output = Command::new("pg_dump")
         .arg("--schema-only")
@@ -49,7 +53,11 @@ pub async fn dump_schema(source_url: &str, database: &str, output_path: &str) ->
 
 /// Dump data for a specific database
 pub async fn dump_data(source_url: &str, database: &str, output_path: &str) -> Result<()> {
-    tracing::info!("Dumping data for database '{}' to {}", database, output_path);
+    tracing::info!(
+        "Dumping data for database '{}' to {}",
+        database,
+        output_path
+    );
 
     let output = Command::new("pg_dump")
         .arg("--data-only")
@@ -87,7 +95,7 @@ mod tests {
 
         // Verify file contains SQL
         let content = std::fs::read_to_string(&output).unwrap();
-        assert!(content.contains("CREATE ROLE") || content.len() > 0);
+        assert!(content.contains("CREATE ROLE") || !content.is_empty());
     }
 
     #[tokio::test]
@@ -98,7 +106,7 @@ mod tests {
         let output = dir.path().join("schema.sql");
 
         // Extract database name from URL
-        let db = url.split('/').last().unwrap_or("postgres");
+        let db = url.split('/').next_back().unwrap_or("postgres");
 
         let result = dump_schema(&url, db, output.to_str().unwrap()).await;
 

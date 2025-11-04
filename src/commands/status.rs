@@ -1,9 +1,9 @@
 // ABOUTME: Status command implementation - Check replication health
 // ABOUTME: Displays real-time replication lag and subscription status
 
-use anyhow::{Context, Result};
 use crate::postgres::connect;
 use crate::replication::{get_replication_lag, get_subscription_status, is_replication_caught_up};
+use anyhow::{Context, Result};
 
 /// Format milliseconds into a human-readable duration string
 fn format_duration(ms: i64) -> String {
@@ -11,13 +11,13 @@ fn format_duration(ms: i64) -> String {
         format!("{}ms", ms)
     } else if ms < 60_000 {
         format!("{:.1}s", ms as f64 / 1000.0)
-    } else if ms < 3600_000 {
+    } else if ms < 3_600_000 {
         let minutes = ms / 60_000;
         let seconds = (ms % 60_000) / 1000;
         format!("{}m {}s", minutes, seconds)
     } else {
-        let hours = ms / 3600_000;
-        let minutes = (ms % 3600_000) / 60_000;
+        let hours = ms / 3_600_000;
+        let minutes = (ms % 3_600_000) / 60_000;
         format!("{}h {}m", hours, minutes)
     }
 }
@@ -196,8 +196,7 @@ mod tests {
             Err(e) => {
                 println!("Error in status command: {:?}", e);
                 // It's okay if replication is not set up yet
-                if !e.to_string().contains("not supported")
-                    && !e.to_string().contains("permission")
+                if !e.to_string().contains("not supported") && !e.to_string().contains("permission")
                 {
                     panic!("Unexpected error: {:?}", e);
                 }

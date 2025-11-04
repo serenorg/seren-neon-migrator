@@ -1,8 +1,8 @@
 // ABOUTME: Initial migration command for schema and data copy
 // ABOUTME: Performs full database dump and restore from source to target
 
+use crate::{migration, postgres};
 use anyhow::{Context, Result};
-use crate::{postgres, migration};
 use tempfile::TempDir;
 
 pub async fn init(source_url: &str, target_url: &str) -> Result<()> {
@@ -48,7 +48,8 @@ pub async fn init(source_url: &str, target_url: &str) -> Result<()> {
         // Dump and restore schema
         tracing::info!("  Dumping schema for '{}'...", db_info.name);
         let schema_file = temp_path.join(format!("{}_schema.sql", db_info.name));
-        migration::dump_schema(&source_db_url, &db_info.name, schema_file.to_str().unwrap()).await?;
+        migration::dump_schema(&source_db_url, &db_info.name, schema_file.to_str().unwrap())
+            .await?;
 
         tracing::info!("  Restoring schema for '{}'...", db_info.name);
         migration::restore_schema(&target_db_url, schema_file.to_str().unwrap()).await?;
@@ -98,7 +99,10 @@ fn replace_database_in_url(url: &str, new_database: &str) -> Result<String> {
 }
 
 /// Create database if it doesn't already exist
-async fn create_database_if_not_exists(client: &tokio_postgres::Client, database: &str) -> Result<()> {
+async fn create_database_if_not_exists(
+    client: &tokio_postgres::Client,
+    database: &str,
+) -> Result<()> {
     let query = format!("CREATE DATABASE \"{}\"", database);
 
     match client.execute(&query, &[]).await {
@@ -136,7 +140,10 @@ mod tests {
     fn test_replace_database_in_url() {
         let url = "postgresql://user:pass@host:5432/olddb?sslmode=require";
         let result = replace_database_in_url(url, "newdb").unwrap();
-        assert_eq!(result, "postgresql://user:pass@host:5432/newdb?sslmode=require");
+        assert_eq!(
+            result,
+            "postgresql://user:pass@host:5432/newdb?sslmode=require"
+        );
 
         let url_no_params = "postgresql://user:pass@host:5432/olddb";
         let result = replace_database_in_url(url_no_params, "newdb").unwrap();

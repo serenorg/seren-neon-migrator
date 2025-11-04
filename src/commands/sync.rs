@@ -1,9 +1,9 @@
 // ABOUTME: Sync command implementation - Phase 3 of migration
 // ABOUTME: Sets up logical replication between source and target databases
 
-use anyhow::{Context, Result};
 use crate::postgres::connect;
 use crate::replication::{create_publication, create_subscription, wait_for_sync};
+use anyhow::{Context, Result};
 
 /// Set up logical replication between source and target databases
 ///
@@ -56,7 +56,10 @@ pub async fn sync(
         .context("Failed to create subscription on target")?;
 
     // Wait for initial sync to complete
-    tracing::info!("Waiting for initial sync to complete (timeout: {}s)...", timeout);
+    tracing::info!(
+        "Waiting for initial sync to complete (timeout: {}s)...",
+        timeout
+    );
     wait_for_sync(&target_client, sub_name, timeout)
         .await
         .context("Failed to wait for initial sync")?;
@@ -88,20 +91,25 @@ mod tests {
         let source_url = std::env::var("TEST_SOURCE_URL").unwrap();
         let target_url = std::env::var("TEST_TARGET_URL").unwrap();
 
-        let pub_name = Some("test_sync_pub");
-        let sub_name = Some("test_sync_sub");
-        let timeout = Some(60); // 1 minute timeout for test
+        let pub_name = "test_sync_pub";
+        let sub_name = "test_sync_sub";
+        let timeout = 60; // 1 minute timeout for test
 
-        let result = sync(&source_url, &target_url, pub_name, sub_name, timeout).await;
+        let result = sync(
+            &source_url,
+            &target_url,
+            Some(pub_name),
+            Some(sub_name),
+            Some(timeout),
+        )
+        .await;
 
         match &result {
             Ok(_) => println!("✓ Sync command completed successfully"),
             Err(e) => {
                 println!("Error in sync command: {:?}", e);
                 // If either database doesn't support logical replication, skip
-                if e.to_string().contains("not supported")
-                    || e.to_string().contains("permission")
-                {
+                if e.to_string().contains("not supported") || e.to_string().contains("permission") {
                     println!("Skipping test - database might not support logical replication");
                     return;
                 }
@@ -112,12 +120,12 @@ mod tests {
 
         // Clean up
         let target_client = connect(&target_url).await.unwrap();
-        crate::replication::drop_subscription(&target_client, sub_name.unwrap())
+        crate::replication::drop_subscription(&target_client, sub_name)
             .await
             .unwrap();
 
         let source_client = connect(&source_url).await.unwrap();
-        crate::replication::drop_publication(&source_client, pub_name.unwrap())
+        crate::replication::drop_publication(&source_client, pub_name)
             .await
             .unwrap();
     }
@@ -134,9 +142,7 @@ mod tests {
             Ok(_) => println!("✓ Sync with defaults completed successfully"),
             Err(e) => {
                 println!("Error in sync with defaults: {:?}", e);
-                if e.to_string().contains("not supported")
-                    || e.to_string().contains("permission")
-                {
+                if e.to_string().contains("not supported") || e.to_string().contains("permission") {
                     println!("Skipping test - database might not support logical replication");
                     return;
                 }

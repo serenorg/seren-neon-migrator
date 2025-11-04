@@ -14,8 +14,8 @@ fn get_test_urls() -> Option<(String, String)> {
 #[tokio::test]
 #[ignore]
 async fn test_validate_command_integration() {
-    let (source_url, target_url) = get_test_urls()
-        .expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
+    let (source_url, target_url) =
+        get_test_urls().expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
 
     println!("Testing validate command...");
     let result = commands::validate(&source_url, &target_url).await;
@@ -38,8 +38,8 @@ async fn test_validate_command_integration() {
 #[tokio::test]
 #[ignore]
 async fn test_init_command_integration() {
-    let (source_url, target_url) = get_test_urls()
-        .expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
+    let (source_url, target_url) =
+        get_test_urls().expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
 
     println!("Testing init command...");
     println!("⚠ WARNING: This will copy all data from source to target!");
@@ -61,8 +61,8 @@ async fn test_init_command_integration() {
 #[tokio::test]
 #[ignore]
 async fn test_sync_command_integration() {
-    let (source_url, target_url) = get_test_urls()
-        .expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
+    let (source_url, target_url) =
+        get_test_urls().expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
 
     println!("Testing sync command...");
     println!("⚠ WARNING: This will set up logical replication!");
@@ -76,9 +76,7 @@ async fn test_sync_command_integration() {
         Err(e) => {
             println!("Sync command failed: {:?}", e);
             // Sync might fail if databases don't support logical replication
-            if e.to_string().contains("not supported")
-                || e.to_string().contains("permission")
-            {
+            if e.to_string().contains("not supported") || e.to_string().contains("permission") {
                 println!("Skipping - database doesn't support logical replication");
                 return;
             }
@@ -89,8 +87,8 @@ async fn test_sync_command_integration() {
 #[tokio::test]
 #[ignore]
 async fn test_status_command_integration() {
-    let (source_url, target_url) = get_test_urls()
-        .expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
+    let (source_url, target_url) =
+        get_test_urls().expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
 
     println!("Testing status command...");
 
@@ -116,8 +114,8 @@ async fn test_status_command_integration() {
 #[tokio::test]
 #[ignore]
 async fn test_verify_command_integration() {
-    let (source_url, target_url) = get_test_urls()
-        .expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
+    let (source_url, target_url) =
+        get_test_urls().expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
 
     println!("Testing verify command...");
 
@@ -140,13 +138,13 @@ async fn test_verify_command_integration() {
 #[tokio::test]
 #[ignore]
 async fn test_full_migration_workflow() {
-    let (source_url, target_url) = get_test_urls()
-        .expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
+    let (source_url, target_url) =
+        get_test_urls().expect("TEST_SOURCE_URL and TEST_TARGET_URL must be set");
 
     println!("========================================");
     println!("Testing FULL migration workflow");
     println!("========================================");
-    println!("");
+    println!();
 
     // Step 1: Validate
     println!("STEP 1: Validate databases...");
@@ -158,7 +156,7 @@ async fn test_full_migration_workflow() {
             println!("Continuing anyway for test purposes...");
         }
     }
-    println!("");
+    println!();
 
     // Step 2: Init (commented out by default to avoid destructive operations)
     // Uncomment this section to test the full workflow including data copy
@@ -173,7 +171,7 @@ async fn test_full_migration_workflow() {
             return;
         }
     }
-    println!("");
+    println!();
     */
 
     // Step 3: Sync (commented out by default)
@@ -192,7 +190,7 @@ async fn test_full_migration_workflow() {
             return;
         }
     }
-    println!("");
+    println!();
     */
 
     // Step 4: Status
@@ -204,7 +202,7 @@ async fn test_full_migration_workflow() {
             println!("✗ Status failed: {:?}", e);
         }
     }
-    println!("");
+    println!();
 
     // Step 5: Verify (safe to run, read-only)
     println!("STEP 5: Verify data integrity...");
@@ -216,7 +214,7 @@ async fn test_full_migration_workflow() {
             println!("This is expected if init/sync were not run");
         }
     }
-    println!("");
+    println!();
 
     println!("========================================");
     println!("Full workflow test completed");
@@ -232,8 +230,7 @@ async fn test_error_handling_bad_source_url() {
     println!("Testing error handling with bad source URL...");
 
     let bad_source = "postgresql://invalid:invalid@nonexistent:5432/invalid";
-    let (_, target_url) = get_test_urls()
-        .expect("TEST_TARGET_URL must be set");
+    let (_, target_url) = get_test_urls().expect("TEST_TARGET_URL must be set");
 
     let result = commands::validate(bad_source, &target_url).await;
 
@@ -247,8 +244,7 @@ async fn test_error_handling_bad_source_url() {
 async fn test_error_handling_bad_target_url() {
     println!("Testing error handling with bad target URL...");
 
-    let (source_url, _) = get_test_urls()
-        .expect("TEST_SOURCE_URL must be set");
+    let (source_url, _) = get_test_urls().expect("TEST_SOURCE_URL must be set");
     let bad_target = "postgresql://invalid:invalid@nonexistent:5432/invalid";
 
     let result = commands::validate(&source_url, bad_target).await;

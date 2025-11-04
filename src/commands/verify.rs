@@ -1,9 +1,9 @@
 // ABOUTME: Verify command implementation - Validate data integrity
 // ABOUTME: Compares table checksums between source and target databases
 
-use anyhow::{Context, Result};
+use crate::migration::{compare_tables, list_tables, ChecksumResult};
 use crate::postgres::connect;
-use crate::migration::{list_tables, compare_tables, ChecksumResult};
+use anyhow::{Context, Result};
 
 /// Verify data integrity between source and target databases
 ///
@@ -56,9 +56,7 @@ pub async fn verify(source_url: &str, target_url: &str) -> Result<()> {
             table.name
         );
 
-        match compare_tables(&source_client, &target_client, &table.schema, &table.name)
-            .await
-        {
+        match compare_tables(&source_client, &target_client, &table.schema, &table.name).await {
             Ok(result) => {
                 if result.is_valid() {
                     tracing::info!(

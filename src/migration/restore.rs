@@ -81,7 +81,9 @@ mod tests {
         let dump_file = dir.path().join("globals.sql");
 
         // Dump from source
-        dump::dump_globals(&source_url, dump_file.to_str().unwrap()).await.unwrap();
+        dump::dump_globals(&source_url, dump_file.to_str().unwrap())
+            .await
+            .unwrap();
 
         // Restore to target
         let result = restore_globals(&target_url, dump_file.to_str().unwrap()).await;

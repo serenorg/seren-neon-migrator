@@ -2,8 +2,8 @@
 // ABOUTME: Creates and manages PostgreSQL subscriptions to receive replicated data
 
 use anyhow::{Context, Result};
-use tokio_postgres::Client;
 use std::time::Duration;
+use tokio_postgres::Client;
 
 /// Create a subscription to a publication on the source database
 pub async fn create_subscription(
@@ -21,7 +21,10 @@ pub async fn create_subscription(
 
     match client.execute(&query, &[]).await {
         Ok(_) => {
-            tracing::info!("✓ Subscription '{}' created successfully", subscription_name);
+            tracing::info!(
+                "✓ Subscription '{}' created successfully",
+                subscription_name
+            );
             Ok(())
         }
         Err(e) => {
@@ -31,7 +34,11 @@ pub async fn create_subscription(
                 tracing::info!("✓ Subscription '{}' already exists", subscription_name);
                 Ok(())
             } else {
-                anyhow::bail!("Failed to create subscription '{}': {}", subscription_name, err_str)
+                anyhow::bail!(
+                    "Failed to create subscription '{}': {}",
+                    subscription_name,
+                    err_str
+                )
             }
         }
     }
@@ -55,10 +62,10 @@ pub async fn drop_subscription(client: &Client, subscription_name: &str) -> Resu
 
     let query = format!("DROP SUBSCRIPTION IF EXISTS \"{}\"", subscription_name);
 
-    client
-        .execute(&query, &[])
-        .await
-        .context(format!("Failed to drop subscription '{}'", subscription_name))?;
+    client.execute(&query, &[]).await.context(format!(
+        "Failed to drop subscription '{}'",
+        subscription_name
+    ))?;
 
     tracing::info!("✓ Subscription '{}' dropped", subscription_name);
     Ok(())
@@ -71,7 +78,10 @@ pub async fn wait_for_sync(
     subscription_name: &str,
     timeout_secs: u64,
 ) -> Result<()> {
-    tracing::info!("Waiting for subscription '{}' to sync...", subscription_name);
+    tracing::info!(
+        "Waiting for subscription '{}' to sync...",
+        subscription_name
+    );
 
     let start = std::time::Instant::now();
     let timeout = Duration::from_secs(timeout_secs);
@@ -161,9 +171,7 @@ mod tests {
             Err(e) => {
                 println!("Error creating subscription: {:?}", e);
                 // If target doesn't support subscriptions, skip rest of test
-                if e.to_string().contains("not supported")
-                    || e.to_string().contains("permission")
-                {
+                if e.to_string().contains("not supported") || e.to_string().contains("permission") {
                     println!("Skipping test - target might not support subscriptions");
                     return;
                 }

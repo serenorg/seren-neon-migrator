@@ -22,7 +22,11 @@ pub async fn create_publication(client: &Client, publication_name: &str) -> Resu
                 tracing::info!("✓ Publication '{}' already exists", publication_name);
                 Ok(())
             } else {
-                anyhow::bail!("Failed to create publication '{}': {}", publication_name, err_str)
+                anyhow::bail!(
+                    "Failed to create publication '{}': {}",
+                    publication_name,
+                    err_str
+                )
             }
         }
     }

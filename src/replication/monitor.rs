@@ -182,19 +182,16 @@ mod tests {
                 println!("✓ Replication lag query succeeded");
                 println!("Found {} replication slots", stats.len());
                 for stat in stats {
-                    println!("  - {}: {} (replay lag: {:?}ms)",
-                        stat.application_name,
-                        stat.state,
-                        stat.replay_lag_ms
+                    println!(
+                        "  - {}: {} (replay lag: {:?}ms)",
+                        stat.application_name, stat.state, stat.replay_lag_ms
                     );
                 }
             }
             Err(e) => {
                 println!("Error querying replication lag: {:?}", e);
                 // It's okay if no replication is active
-                if !e.to_string().contains("relation")
-                    && !e.to_string().contains("permission")
-                {
+                if !e.to_string().contains("relation") && !e.to_string().contains("permission") {
                     panic!("Unexpected error: {:?}", e);
                 }
             }
@@ -215,19 +212,16 @@ mod tests {
                 println!("✓ Subscription status query succeeded");
                 println!("Found {} subscriptions", stats.len());
                 for stat in stats {
-                    println!("  - {}: state={} (pid: {:?})",
-                        stat.subscription_name,
-                        stat.state,
-                        stat.pid
+                    println!(
+                        "  - {}: state={} (pid: {:?})",
+                        stat.subscription_name, stat.state, stat.pid
                     );
                 }
             }
             Err(e) => {
                 println!("Error querying subscription status: {:?}", e);
                 // It's okay if no subscriptions exist
-                if !e.to_string().contains("relation")
-                    && !e.to_string().contains("permission")
-                {
+                if !e.to_string().contains("relation") && !e.to_string().contains("permission") {
                     panic!("Unexpected error: {:?}", e);
                 }
             }
@@ -249,9 +243,7 @@ mod tests {
             Err(e) => {
                 println!("Error checking if caught up: {:?}", e);
                 // It's okay if no replication is active
-                if !e.to_string().contains("relation")
-                    && !e.to_string().contains("permission")
-                {
+                if !e.to_string().contains("relation") && !e.to_string().contains("permission") {
                     panic!("Unexpected error: {:?}", e);
                 }
             }

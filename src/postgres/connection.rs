@@ -2,9 +2,9 @@
 // ABOUTME: Handles connection string parsing, TLS setup, and connection lifecycle
 
 use anyhow::{Context, Result};
-use tokio_postgres::Client;
-use postgres_native_tls::MakeTlsConnector;
 use native_tls::TlsConnector;
+use postgres_native_tls::MakeTlsConnector;
+use tokio_postgres::Client;
 
 /// Connect to PostgreSQL database with TLS support
 pub async fn connect(connection_string: &str) -> Result<Client> {

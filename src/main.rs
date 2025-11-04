@@ -59,20 +59,12 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Validate { source, target } => {
-            commands::validate(&source, &target).await
-        }
-        Commands::Init { source, target } => {
-            commands::init(&source, &target).await
-        }
+        Commands::Validate { source, target } => commands::validate(&source, &target).await,
+        Commands::Init { source, target } => commands::init(&source, &target).await,
         Commands::Sync { source, target } => {
             commands::sync(&source, &target, None, None, None).await
         }
-        Commands::Status { source, target } => {
-            commands::status(&source, &target, None).await
-        }
-        Commands::Verify { source, target } => {
-            commands::verify(&source, &target).await
-        }
+        Commands::Status { source, target } => commands::status(&source, &target, None).await,
+        Commands::Verify { source, target } => commands::verify(&source, &target).await,
     }
 }

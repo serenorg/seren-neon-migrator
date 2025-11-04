@@ -1,8 +1,8 @@
 // ABOUTME: Pre-flight validation command for migration readiness
 // ABOUTME: Checks connectivity, privileges, and version compatibility
 
-use anyhow::{bail, Context, Result};
 use crate::postgres;
+use anyhow::{bail, Context, Result};
 
 pub async fn validate(source_url: &str, target_url: &str) -> Result<()> {
     tracing::info!("Starting validation...");
@@ -33,7 +33,9 @@ pub async fn validate(source_url: &str, target_url: &str) -> Result<()> {
     tracing::info!("Checking target privileges...");
     let target_privs = postgres::check_target_privileges(&target_client).await?;
     if !target_privs.has_create_db && !target_privs.is_superuser {
-        bail!("Target user lacks CREATE DATABASE privilege. Grant with: ALTER USER <user> CREATEDB;");
+        bail!(
+            "Target user lacks CREATE DATABASE privilege. Grant with: ALTER USER <user> CREATEDB;"
+        );
     }
     if !target_privs.has_create_role && !target_privs.is_superuser {
         tracing::warn!("⚠ Target user lacks CREATE ROLE privilege. Role migration may fail.");
@@ -54,7 +56,8 @@ pub async fn validate(source_url: &str, target_url: &str) -> Result<()> {
     }
     tracing::info!(
         "✓ Version compatibility confirmed (both {}.{})",
-        source_version.major, source_version.minor
+        source_version.major,
+        source_version.minor
     );
 
     tracing::info!("✅ Validation complete - ready for migration");
@@ -82,7 +85,7 @@ async fn get_pg_version(client: &tokio_postgres::Client) -> Result<PgVersion> {
         .split('.')
         .collect();
 
-    let major = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let major = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
     let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
 
     Ok(PgVersion { major, minor })

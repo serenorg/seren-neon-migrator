@@ -105,7 +105,10 @@ mod tests {
         // Result depends on test database, but should not error
         println!("Found {} tables", tables.len());
         for table in tables.iter().take(10) {
-            println!("  - {}.{} ({} rows)", table.schema, table.name, table.row_count_estimate);
+            println!(
+                "  - {}.{} ({} rows)",
+                table.schema, table.name, table.row_count_estimate
+            );
         }
     }
 }

@@ -68,10 +68,7 @@ pub async fn compute_table_checksum(
     let concat_expr = coalesce_exprs.join(" || '|' || ");
 
     // Build ORDER BY clause using all columns
-    let order_by: Vec<String> = columns
-        .iter()
-        .map(|col| format!("\"{}\"", col))
-        .collect();
+    let order_by: Vec<String> = columns.iter().map(|col| format!("\"{}\"", col)).collect();
     let order_by_clause = order_by.join(", ");
 
     // Compute checksum: MD5 of all concatenated rows, ordered deterministically
@@ -209,13 +206,8 @@ mod tests {
         let target_client = connect(&target_url).await.unwrap();
 
         // Compare a system table that should exist on both
-        let result = compare_tables(
-            &source_client,
-            &target_client,
-            "pg_catalog",
-            "pg_database",
-        )
-        .await;
+        let result =
+            compare_tables(&source_client, &target_client, "pg_catalog", "pg_database").await;
 
         match &result {
             Ok(comparison) => {
