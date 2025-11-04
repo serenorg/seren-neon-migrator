@@ -3,8 +3,6 @@
 
 use clap::{Parser, Subcommand};
 
-mod error;
-
 #[derive(Parser)]
 #[command(name = "seren-neon-migrator")]
 #[command(about = "Zero-downtime migration from Neon to Seren", long_about = None)]
