@@ -2,6 +2,7 @@
 // ABOUTME: Parses commands and routes to appropriate handlers
 
 use clap::{Parser, Subcommand};
+use seren_neon_migrator::commands;
 
 #[derive(Parser)]
 #[command(name = "seren-neon-migrator")]
@@ -59,9 +60,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Validate { source, target } => {
-            println!("Validating migration from {} to {}", source, target);
-            // TODO: Implement
-            Ok(())
+            commands::validate(&source, &target).await
         }
         Commands::Init { source, target } => {
             println!("Initializing migration from {} to {}", source, target);
