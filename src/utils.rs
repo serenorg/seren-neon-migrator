@@ -6,6 +6,44 @@ use std::time::Duration;
 use which::which;
 
 /// Validate a PostgreSQL connection string
+///
+/// Checks that the connection string has proper format and required components:
+/// - Starts with "postgres://" or "postgresql://"
+/// - Contains user credentials (@ symbol)
+/// - Contains database name (/ separator with at least 3 occurrences)
+///
+/// # Arguments
+///
+/// * `url` - Connection string to validate
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the connection string is valid.
+///
+/// # Errors
+///
+/// Returns an error with helpful message if the connection string is:
+/// - Empty or whitespace only
+/// - Missing proper scheme (postgres:// or postgresql://)
+/// - Missing user credentials (@ symbol)
+/// - Missing database name
+///
+/// # Examples
+///
+/// ```
+/// # use neon_seren_migrator::utils::validate_connection_string;
+/// # use anyhow::Result;
+/// # fn example() -> Result<()> {
+/// // Valid connection strings
+/// validate_connection_string("postgresql://user:pass@localhost:5432/mydb")?;
+/// validate_connection_string("postgres://user@host/db")?;
+///
+/// // Invalid - will return error
+/// assert!(validate_connection_string("").is_err());
+/// assert!(validate_connection_string("mysql://localhost/db").is_err());
+/// # Ok(())
+/// # }
+/// ```
 pub fn validate_connection_string(url: &str) -> Result<()> {
     if url.trim().is_empty() {
         bail!("Connection string cannot be empty");
@@ -40,6 +78,31 @@ pub fn validate_connection_string(url: &str) -> Result<()> {
 }
 
 /// Check that required PostgreSQL client tools are available
+///
+/// Verifies that the following tools are installed and in PATH:
+/// - `pg_dump` - For dumping database schema and data
+/// - `pg_dumpall` - For dumping global objects (roles, tablespaces)
+/// - `psql` - For restoring databases
+///
+/// # Returns
+///
+/// Returns `Ok(())` if all required tools are found.
+///
+/// # Errors
+///
+/// Returns an error with installation instructions if any tools are missing.
+///
+/// # Examples
+///
+/// ```
+/// # use neon_seren_migrator::utils::check_required_tools;
+/// # use anyhow::Result;
+/// # fn example() -> Result<()> {
+/// // Check if PostgreSQL tools are installed
+/// check_required_tools()?;
+/// # Ok(())
+/// # }
+/// ```
 pub fn check_required_tools() -> Result<()> {
     let tools = ["pg_dump", "pg_dumpall", "psql"];
     let mut missing = Vec::new();
@@ -67,6 +130,35 @@ pub fn check_required_tools() -> Result<()> {
 }
 
 /// Retry a function with exponential backoff
+///
+/// Executes an async operation with automatic retry on failure. Each retry doubles
+/// the delay (exponential backoff) to handle transient failures gracefully.
+///
+/// # Arguments
+///
+/// * `operation` - Async function to retry (FnMut returning Future\<Output = Result\<T\>\>)
+/// * `max_retries` - Maximum number of retry attempts (0 = no retries, just initial attempt)
+/// * `initial_delay` - Delay before first retry (doubles each subsequent retry)
+///
+/// # Returns
+///
+/// Returns the successful result or the last error after all retries exhausted.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use std::time::Duration;
+/// # use neon_seren_migrator::utils::retry_with_backoff;
+/// # async fn example() -> Result<()> {
+/// let result = retry_with_backoff(
+///     || async { Ok("success") },
+///     3,  // Try up to 3 times
+///     Duration::from_secs(1)  // Start with 1s delay
+/// ).await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn retry_with_backoff<F, Fut, T>(
     mut operation: F,
     max_retries: u32,
@@ -103,8 +195,33 @@ where
 }
 
 /// Sanitize an identifier (table name, schema name, etc.) for display
-/// This doesn't make it safe for SQL (we use parameterized queries for that)
-/// but ensures it's safe to display in error messages
+///
+/// Removes control characters and limits length to prevent log injection attacks
+/// and ensure readable error messages.
+///
+/// **Note**: This is for display purposes only. For SQL safety, use parameterized
+/// queries instead.
+///
+/// # Arguments
+///
+/// * `identifier` - The identifier to sanitize (table name, schema name, etc.)
+///
+/// # Returns
+///
+/// Sanitized string with control characters removed and length limited to 100 chars.
+///
+/// # Examples
+///
+/// ```
+/// # use neon_seren_migrator::utils::sanitize_identifier;
+/// assert_eq!(sanitize_identifier("normal_table"), "normal_table");
+/// assert_eq!(sanitize_identifier("table\x00name"), "tablename");
+/// assert_eq!(sanitize_identifier("table\nname"), "tablename");
+///
+/// // Length limit
+/// let long_name = "a".repeat(200);
+/// assert_eq!(sanitize_identifier(&long_name).len(), 100);
+/// ```
 pub fn sanitize_identifier(identifier: &str) -> String {
     // Remove any control characters and limit length for display
     identifier

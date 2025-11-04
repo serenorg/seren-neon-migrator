@@ -4,6 +4,48 @@
 use crate::{postgres, utils};
 use anyhow::{bail, Context, Result};
 
+/// Pre-flight validation command for migration readiness
+///
+/// Performs comprehensive validation before migration:
+/// - Checks for required PostgreSQL client tools (pg_dump, pg_dumpall, psql)
+/// - Validates connection string format
+/// - Tests connectivity to both source and target databases
+/// - Verifies source user has REPLICATION privilege
+/// - Verifies target user has CREATEDB privilege
+/// - Confirms PostgreSQL major versions match
+///
+/// # Arguments
+///
+/// * `source_url` - PostgreSQL connection string for source (Neon) database
+/// * `target_url` - PostgreSQL connection string for target (Seren) database
+///
+/// # Returns
+///
+/// Returns `Ok(())` if all validation checks pass.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - Required PostgreSQL tools are not installed
+/// - Connection strings are invalid
+/// - Cannot connect to source or target database
+/// - Source user lacks REPLICATION privilege
+/// - Target user lacks CREATEDB privilege
+/// - PostgreSQL major versions don't match
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use neon_seren_migrator::commands::validate;
+/// # async fn example() -> Result<()> {
+/// validate(
+///     "postgresql://user:pass@neon.tech/sourcedb",
+///     "postgresql://user:pass@seren.example.com/targetdb"
+/// ).await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn validate(source_url: &str, target_url: &str) -> Result<()> {
     tracing::info!("Starting validation...");
 

@@ -5,6 +5,47 @@ use crate::{migration, postgres};
 use anyhow::{Context, Result};
 use tempfile::TempDir;
 
+/// Initial migration command for schema and data copy
+///
+/// Performs a full database dump and restore from source to target in four steps:
+/// 1. Dumps global objects (roles, tablespaces) from source
+/// 2. Restores global objects to target
+/// 3. Discovers all user databases on source
+/// 4. Migrates each database (schema and data)
+///
+/// Uses temporary directory for dump files, which is automatically cleaned up.
+///
+/// # Arguments
+///
+/// * `source_url` - PostgreSQL connection string for source (Neon) database
+/// * `target_url` - PostgreSQL connection string for target (Seren) database
+///
+/// # Returns
+///
+/// Returns `Ok(())` if migration completes successfully.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - Cannot create temporary directory
+/// - Global objects dump/restore fails
+/// - Cannot connect to source database
+/// - Database discovery fails
+/// - Any database migration fails
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use neon_seren_migrator::commands::init;
+/// # async fn example() -> Result<()> {
+/// init(
+///     "postgresql://user:pass@neon.tech/sourcedb",
+///     "postgresql://user:pass@seren.example.com/targetdb"
+/// ).await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn init(source_url: &str, target_url: &str) -> Result<()> {
     tracing::info!("Starting initial migration...");
 

@@ -9,6 +9,39 @@ use std::time::Duration;
 use tokio_postgres::Client;
 
 /// Connect to PostgreSQL database with TLS support
+///
+/// Establishes a connection using the provided connection string with TLS enabled.
+/// The connection lifecycle is managed automatically via tokio spawn.
+///
+/// # Arguments
+///
+/// * `connection_string` - PostgreSQL URL (e.g., "postgresql://user:pass@host:5432/db")
+///
+/// # Returns
+///
+/// Returns a `Client` on success, or an error with context if connection fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The connection string format is invalid
+/// - Authentication fails (invalid username or password)
+/// - The database does not exist
+/// - The database server is unreachable
+/// - TLS negotiation fails
+/// - Connection times out
+/// - pg_hba.conf does not allow the connection
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use neon_seren_migrator::postgres::connect;
+/// # async fn example() -> Result<()> {
+/// let client = connect("postgresql://user:pass@localhost:5432/mydb").await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn connect(connection_string: &str) -> Result<Client> {
     // Parse connection string
     let _config = connection_string
@@ -91,7 +124,33 @@ pub async fn connect(connection_string: &str) -> Result<Client> {
     Ok(client)
 }
 
-/// Connect with automatic retry for transient failures
+/// Connect to PostgreSQL with automatic retry for transient failures
+///
+/// Attempts to connect up to 3 times with exponential backoff (1s, 2s, 4s).
+/// Useful for handling temporary network issues or server restarts.
+///
+/// # Arguments
+///
+/// * `connection_string` - PostgreSQL URL
+///
+/// # Returns
+///
+/// Returns a `Client` after successful connection, or error after all retries exhausted.
+///
+/// # Errors
+///
+/// Returns the last connection error if all retry attempts fail.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use neon_seren_migrator::postgres::connection::connect_with_retry;
+/// # async fn example() -> Result<()> {
+/// let client = connect_with_retry("postgresql://user:pass@localhost:5432/mydb").await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn connect_with_retry(connection_string: &str) -> Result<Client> {
     utils::retry_with_backoff(
         || connect(connection_string),

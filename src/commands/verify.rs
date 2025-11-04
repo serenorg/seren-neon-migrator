@@ -9,11 +9,44 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 /// Verify data integrity between source and target databases
 ///
-/// This command:
+/// This command performs Phase 5 of the migration process:
 /// 1. Lists all tables in the source database
 /// 2. Compares each table's checksum between source and target
 /// 3. Reports any mismatches or missing tables
 /// 4. Provides overall validation summary
+///
+/// Uses parallel verification (up to 4 concurrent table checks) with progress bars
+/// for efficient processing of large databases.
+///
+/// # Arguments
+///
+/// * `source_url` - PostgreSQL connection string for source (Neon) database
+/// * `target_url` - PostgreSQL connection string for target (Seren) database
+///
+/// # Returns
+///
+/// Returns `Ok(())` if all tables match or after displaying verification results.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - Cannot connect to source or target database
+/// - Cannot list tables from source
+/// - Table comparison fails due to connection issues
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use neon_seren_migrator::commands::verify;
+/// # async fn example() -> Result<()> {
+/// verify(
+///     "postgresql://user:pass@neon.tech/sourcedb",
+///     "postgresql://user:pass@seren.example.com/targetdb"
+/// ).await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn verify(source_url: &str, target_url: &str) -> Result<()> {
     tracing::info!("Starting data integrity verification...");
     tracing::info!("");

@@ -24,10 +24,47 @@ fn format_duration(ms: i64) -> String {
 
 /// Check replication status and display health information
 ///
-/// This command:
+/// This command performs Phase 4 of the migration process:
 /// 1. Queries pg_stat_replication on source for replication lag
 /// 2. Queries pg_stat_subscription on target for subscription status
 /// 3. Displays health information in human-readable format
+///
+/// Provides real-time monitoring of replication health including:
+/// - Replication lag (write/flush/replay)
+/// - Subscription state
+/// - Whether target is caught up with source
+///
+/// # Arguments
+///
+/// * `source_url` - PostgreSQL connection string for source (Neon) database
+/// * `target_url` - PostgreSQL connection string for target (Seren) database
+/// * `subscription_name` - Optional subscription name (defaults to "seren_migration_sub")
+///
+/// # Returns
+///
+/// Returns `Ok(())` after displaying status information.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - Cannot connect to source or target database
+/// - Cannot query replication statistics
+/// - Cannot query subscription status
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use neon_seren_migrator::commands::status;
+/// # async fn example() -> Result<()> {
+/// status(
+///     "postgresql://user:pass@neon.tech/sourcedb",
+///     "postgresql://user:pass@seren.example.com/targetdb",
+///     None  // Use default subscription name
+/// ).await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn status(
     source_url: &str,
     target_url: &str,

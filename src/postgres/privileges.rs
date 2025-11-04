@@ -4,14 +4,50 @@
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
+/// Result of privilege check for a PostgreSQL user
+///
+/// Contains information about the user's permissions required for migration.
 pub struct PrivilegeCheck {
+    /// User has REPLICATION privilege (required for source database)
     pub has_replication: bool,
+    /// User has CREATEDB privilege (required for target database)
     pub has_create_db: bool,
+    /// User has CREATEROLE privilege (optional, for role migration)
     pub has_create_role: bool,
+    /// User is a superuser (bypasses other privilege requirements)
     pub is_superuser: bool,
 }
 
 /// Check if connected user has replication privileges (needed for source)
+///
+/// Queries `pg_roles` to determine the privileges of the currently connected user.
+/// For source databases, the user must have REPLICATION privilege (or be a superuser)
+/// to enable logical replication.
+///
+/// # Arguments
+///
+/// * `client` - Connected PostgreSQL client
+///
+/// # Returns
+///
+/// Returns a `PrivilegeCheck` containing the user's privileges.
+///
+/// # Errors
+///
+/// This function will return an error if the database query fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use neon_seren_migrator::postgres::{connect, check_source_privileges};
+/// # async fn example() -> Result<()> {
+/// let client = connect("postgresql://user:pass@localhost:5432/mydb").await?;
+/// let privs = check_source_privileges(&client).await?;
+/// assert!(privs.has_replication || privs.is_superuser);
+/// # Ok(())
+/// # }
+/// ```
 pub async fn check_source_privileges(client: &Client) -> Result<PrivilegeCheck> {
     let row = client
         .query_one(
@@ -31,7 +67,36 @@ pub async fn check_source_privileges(client: &Client) -> Result<PrivilegeCheck> 
     })
 }
 
-/// Check if connected user has sufficient privileges for target
+/// Check if connected user has sufficient privileges for target database
+///
+/// Queries `pg_roles` to determine the privileges of the currently connected user.
+/// For target databases, the user must have CREATEDB privilege (or be a superuser)
+/// to create new databases during migration.
+///
+/// # Arguments
+///
+/// * `client` - Connected PostgreSQL client
+///
+/// # Returns
+///
+/// Returns a `PrivilegeCheck` containing the user's privileges.
+///
+/// # Errors
+///
+/// This function will return an error if the database query fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use neon_seren_migrator::postgres::{connect, check_target_privileges};
+/// # async fn example() -> Result<()> {
+/// let client = connect("postgresql://user:pass@localhost:5432/mydb").await?;
+/// let privs = check_target_privileges(&client).await?;
+/// assert!(privs.has_create_db || privs.is_superuser);
+/// # Ok(())
+/// # }
+/// ```
 pub async fn check_target_privileges(client: &Client) -> Result<PrivilegeCheck> {
     // Same query as source
     check_source_privileges(client).await

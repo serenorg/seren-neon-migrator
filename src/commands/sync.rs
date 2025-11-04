@@ -7,13 +7,50 @@ use anyhow::{Context, Result};
 
 /// Set up logical replication between source and target databases
 ///
-/// This command:
+/// This command performs Phase 3 of the migration process:
 /// 1. Creates a publication on the source database for all tables
 /// 2. Creates a subscription on the target database pointing to the source
 /// 3. Waits for the initial sync to complete
 ///
 /// After this command succeeds, changes on the source will continuously
 /// replicate to the target until the subscription is dropped.
+///
+/// # Arguments
+///
+/// * `source_url` - PostgreSQL connection string for source (Neon) database
+/// * `target_url` - PostgreSQL connection string for target (Seren) database
+/// * `publication_name` - Optional publication name (defaults to "seren_migration_pub")
+/// * `subscription_name` - Optional subscription name (defaults to "seren_migration_sub")
+/// * `sync_timeout_secs` - Optional timeout in seconds (defaults to 300)
+///
+/// # Returns
+///
+/// Returns `Ok(())` if replication setup completes successfully.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - Cannot connect to source or target database
+/// - Publication creation fails
+/// - Subscription creation fails
+/// - Initial sync doesn't complete within timeout
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use neon_seren_migrator::commands::sync;
+/// # async fn example() -> Result<()> {
+/// sync(
+///     "postgresql://user:pass@neon.tech/sourcedb",
+///     "postgresql://user:pass@seren.example.com/targetdb",
+///     None,  // Use default publication name
+///     None,  // Use default subscription name
+///     Some(600)  // 10 minute timeout
+/// ).await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn sync(
     source_url: &str,
     target_url: &str,
