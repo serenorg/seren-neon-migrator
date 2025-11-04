@@ -63,9 +63,7 @@ async fn main() -> anyhow::Result<()> {
             commands::validate(&source, &target).await
         }
         Commands::Init { source, target } => {
-            println!("Initializing migration from {} to {}", source, target);
-            // TODO: Implement
-            Ok(())
+            commands::init(&source, &target).await
         }
         Commands::Sync { source, target } => {
             println!("Setting up replication from {} to {}", source, target);
