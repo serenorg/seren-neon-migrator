@@ -192,9 +192,7 @@ async fn check_extension_compatibility(
     // Check each source extension
     for source_ext in &source_extensions {
         // Check if extension is available on target
-        let target_ext = target_available
-            .iter()
-            .find(|e| e.name == source_ext.name);
+        let target_ext = target_available.iter().find(|e| e.name == source_ext.name);
 
         match target_ext {
             None => {
@@ -206,9 +204,7 @@ async fn check_extension_compatibility(
             Some(target) => {
                 // Check if extension requires preloading
                 if postgres::requires_preload(&source_ext.name) {
-                    let is_preloaded = target_preloaded
-                        .iter()
-                        .any(|lib| lib == &source_ext.name);
+                    let is_preloaded = target_preloaded.iter().any(|lib| lib == &source_ext.name);
 
                     if !is_preloaded {
                         errors.push(format!(
@@ -221,11 +217,7 @@ async fn check_extension_compatibility(
 
                 // Warn on version mismatch
                 if let Some(target_version) = &target.default_version {
-                    let source_major = source_ext
-                        .version
-                        .split('.')
-                        .next()
-                        .unwrap_or("0");
+                    let source_major = source_ext.version.split('.').next().unwrap_or("0");
                     let target_major = target_version.split('.').next().unwrap_or("0");
 
                     if source_major != target_major {
