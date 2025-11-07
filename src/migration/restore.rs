@@ -2,17 +2,19 @@
 // ABOUTME: Restores global objects, schema, and data to target
 
 use anyhow::{bail, Context, Result};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Restore global objects using psql
 pub async fn restore_globals(target_url: &str, input_path: &str) -> Result<()> {
     tracing::info!("Restoring global objects from {}", input_path);
 
-    let output = Command::new("psql")
+    let status = Command::new("psql")
         .arg(format!("--dbname={}", target_url))
         .arg(format!("--file={}", input_path))
         .arg("--quiet")
-        .output()
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
         .context(
             "Failed to execute psql. Is PostgreSQL client installed?\n\
              Install with:\n\
@@ -21,9 +23,8 @@ pub async fn restore_globals(target_url: &str, input_path: &str) -> Result<()> {
              - RHEL/CentOS: sudo yum install postgresql",
         )?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        tracing::warn!("⚠ Some global object restoration warnings: {}", stderr);
+    if !status.success() {
+        tracing::warn!("⚠ Some global object restoration warnings occurred");
         // Don't fail - some errors are expected (roles may already exist)
     }
 
@@ -35,11 +36,13 @@ pub async fn restore_globals(target_url: &str, input_path: &str) -> Result<()> {
 pub async fn restore_schema(target_url: &str, input_path: &str) -> Result<()> {
     tracing::info!("Restoring schema from {}", input_path);
 
-    let output = Command::new("psql")
+    let status = Command::new("psql")
         .arg(format!("--dbname={}", target_url))
         .arg(format!("--file={}", input_path))
         .arg("--quiet")
-        .output()
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
         .context(
             "Failed to execute psql. Is PostgreSQL client installed?\n\
              Install with:\n\
@@ -48,19 +51,16 @@ pub async fn restore_schema(target_url: &str, input_path: &str) -> Result<()> {
              - RHEL/CentOS: sudo yum install postgresql",
         )?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !status.success() {
         bail!(
             "Schema restoration failed.\n\
-             Error: {}\n\
              \n\
              Common causes:\n\
              - Target database does not exist\n\
              - User lacks CREATE privileges on target\n\
              - Schema objects already exist (try dropping them first)\n\
              - Version incompatibility between source and target\n\
-             - Syntax errors in dump file",
-            stderr
+             - Syntax errors in dump file"
         );
     }
 
@@ -88,7 +88,7 @@ pub async fn restore_data(target_url: &str, input_path: &str) -> Result<()> {
         num_cpus
     );
 
-    let output = Command::new("pg_restore")
+    let status = Command::new("pg_restore")
         .arg("--data-only")
         .arg("--no-owner")
         .arg(format!("--jobs={}", num_cpus)) // Parallel restore jobs
@@ -96,7 +96,9 @@ pub async fn restore_data(target_url: &str, input_path: &str) -> Result<()> {
         .arg("--format=directory") // Directory format
         .arg("--verbose") // Show progress
         .arg(input_path)
-        .output()
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
         .context(
             "Failed to execute pg_restore. Is PostgreSQL client installed?\n\
              Install with:\n\
@@ -105,11 +107,9 @@ pub async fn restore_data(target_url: &str, input_path: &str) -> Result<()> {
              - RHEL/CentOS: sudo yum install postgresql",
         )?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !status.success() {
         bail!(
             "Data restoration failed.\n\
-             Error: {}\n\
              \n\
              Common causes:\n\
              - Foreign key constraint violations\n\
@@ -117,8 +117,7 @@ pub async fn restore_data(target_url: &str, input_path: &str) -> Result<()> {
              - User lacks INSERT privileges on target tables\n\
              - Disk space issues on target\n\
              - Data type mismatches\n\
-             - Input directory is not a valid pg_dump directory format",
-            stderr
+             - Input directory is not a valid pg_dump directory format"
         );
     }
 

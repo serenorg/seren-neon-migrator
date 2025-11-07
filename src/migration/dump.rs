@@ -3,18 +3,20 @@
 
 use crate::filters::ReplicationFilter;
 use anyhow::{bail, Context, Result};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Dump global objects (roles, tablespaces) using pg_dumpall
 pub async fn dump_globals(source_url: &str, output_path: &str) -> Result<()> {
     tracing::info!("Dumping global objects to {}", output_path);
 
-    let output = Command::new("pg_dumpall")
+    let status = Command::new("pg_dumpall")
         .arg("--globals-only")
         .arg("--no-role-passwords") // Don't dump passwords
         .arg(format!("--dbname={}", source_url))
         .arg(format!("--file={}", output_path))
-        .output()
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
         .context(
             "Failed to execute pg_dumpall. Is PostgreSQL client installed?\n\
              Install with:\n\
@@ -23,18 +25,15 @@ pub async fn dump_globals(source_url: &str, output_path: &str) -> Result<()> {
              - RHEL/CentOS: sudo yum install postgresql",
         )?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !status.success() {
         bail!(
             "pg_dumpall failed to dump global objects.\n\
-             Error: {}\n\
              \n\
              Common causes:\n\
              - Connection authentication failed\n\
              - User lacks sufficient privileges (need SUPERUSER or pg_read_all_settings role)\n\
              - Network connectivity issues\n\
-             - Invalid connection string",
-            stderr
+             - Invalid connection string"
         );
     }
 
@@ -79,9 +78,11 @@ pub async fn dump_schema(
     }
 
     cmd.arg(format!("--dbname={}", source_url))
-        .arg(format!("--file={}", output_path));
+        .arg(format!("--file={}", output_path))
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
 
-    let output = cmd.output().context(
+    let status = cmd.status().context(
         "Failed to execute pg_dump. Is PostgreSQL client installed?\n\
          Install with:\n\
          - Ubuntu/Debian: sudo apt-get install postgresql-client\n\
@@ -89,19 +90,16 @@ pub async fn dump_schema(
          - RHEL/CentOS: sudo yum install postgresql",
     )?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !status.success() {
         bail!(
             "pg_dump failed to dump schema for database '{}'.\n\
-             Error: {}\n\
              \n\
              Common causes:\n\
              - Database does not exist\n\
              - Connection authentication failed\n\
              - User lacks privileges to read database schema\n\
              - Network connectivity issues",
-            database,
-            stderr
+            database
         );
     }
 
@@ -163,9 +161,11 @@ pub async fn dump_data(
     }
 
     cmd.arg(format!("--dbname={}", source_url))
-        .arg(format!("--file={}", output_path));
+        .arg(format!("--file={}", output_path))
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
 
-    let output = cmd.output().context(
+    let status = cmd.status().context(
         "Failed to execute pg_dump. Is PostgreSQL client installed?\n\
          Install with:\n\
          - Ubuntu/Debian: sudo apt-get install postgresql-client\n\
@@ -173,11 +173,9 @@ pub async fn dump_data(
          - RHEL/CentOS: sudo yum install postgresql",
     )?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !status.success() {
         bail!(
             "pg_dump failed to dump data for database '{}'.\n\
-             Error: {}\n\
              \n\
              Common causes:\n\
              - Database does not exist\n\
@@ -186,8 +184,7 @@ pub async fn dump_data(
              - Network connectivity issues\n\
              - Insufficient disk space for dump directory\n\
              - Output directory already exists (pg_dump requires non-existent path)",
-            database,
-            stderr
+            database
         );
     }
 
