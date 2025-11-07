@@ -75,6 +75,11 @@ pub async fn init(
 ) -> Result<()> {
     tracing::info!("Starting initial replication...");
 
+    // CRITICAL: Ensure source and target are different to prevent data loss
+    crate::utils::validate_source_target_different(source_url, target_url)
+        .context("Source and target validation failed")?;
+    tracing::info!("✓ Verified source and target are different databases");
+
     // Create temporary directory for dump files
     // TempDir automatically cleans up on drop, even if errors occur
     let temp_dir = TempDir::new().context("Failed to create temp directory")?;

@@ -94,6 +94,12 @@ pub async fn status(
     tracing::info!("Checking replication status...");
     tracing::info!("");
 
+    // Ensure source and target are different
+    crate::utils::validate_source_target_different(source_url, target_url)
+        .context("Source and target validation failed")?;
+    tracing::info!("✓ Verified source and target are different databases");
+    tracing::info!("");
+
     // Connect to source database
     tracing::info!("Connecting to source database...");
     let source_client = connect(source_url)

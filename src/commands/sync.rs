@@ -91,6 +91,11 @@ pub async fn sync(
 
     tracing::info!("Starting logical replication setup...");
 
+    // CRITICAL: Ensure source and target are different to prevent data loss
+    crate::utils::validate_source_target_different(source_url, target_url)
+        .context("Source and target validation failed")?;
+    tracing::info!("✓ Verified source and target are different databases");
+
     // Connect to source database to discover databases
     tracing::info!("Connecting to source database...");
     let source_client = connect(source_url)

@@ -85,6 +85,12 @@ pub async fn validate(
     utils::validate_connection_string(target_url).context("Invalid target connection string")?;
     tracing::info!("✓ Connection strings are valid");
 
+    // Step 0c: Ensure source and target are different
+    tracing::info!("Verifying source and target are different databases...");
+    utils::validate_source_target_different(source_url, target_url)
+        .context("Source and target validation failed")?;
+    tracing::info!("✓ Source and target are different databases");
+
     // Step 1: Connect to source
     tracing::info!("Connecting to source database...");
     let source_client = postgres::connect(source_url)

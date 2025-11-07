@@ -1,7 +1,7 @@
 // ABOUTME: Utility functions for validation and error handling
 // ABOUTME: Provides input validation, retry logic, and resource cleanup
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::time::Duration;
 use which::which;
 
@@ -231,6 +231,157 @@ pub fn sanitize_identifier(identifier: &str) -> String {
         .collect()
 }
 
+/// Validate that source and target URLs are different to prevent accidental data loss
+///
+/// Compares two PostgreSQL connection URLs to ensure they point to different databases.
+/// This is critical for preventing data loss from operations like `init --drop-existing`
+/// where using the same URL for source and target would destroy the source data.
+///
+/// # Comparison Strategy
+///
+/// URLs are normalized and compared on:
+/// - Host (case-insensitive)
+/// - Port (defaulting to 5432 if not specified)
+/// - Database name (case-sensitive)
+/// - User (if present)
+///
+/// Query parameters (like SSL settings) are ignored as they don't affect database identity.
+///
+/// # Arguments
+///
+/// * `source_url` - Source database connection string
+/// * `target_url` - Target database connection string
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the URLs point to different databases.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The URLs point to the same database (same host, port, database name, and user)
+/// - Either URL is malformed and cannot be parsed
+///
+/// # Examples
+///
+/// ```
+/// # use postgres_seren_replicator::utils::validate_source_target_different;
+/// # use anyhow::Result;
+/// # fn example() -> Result<()> {
+/// // Valid - different hosts
+/// validate_source_target_different(
+///     "postgresql://user:pass@source.com:5432/db",
+///     "postgresql://user:pass@target.com:5432/db"
+/// )?;
+///
+/// // Valid - different databases
+/// validate_source_target_different(
+///     "postgresql://user:pass@host:5432/db1",
+///     "postgresql://user:pass@host:5432/db2"
+/// )?;
+///
+/// // Invalid - same database
+/// assert!(validate_source_target_different(
+///     "postgresql://user:pass@host:5432/db",
+///     "postgresql://user:pass@host:5432/db"
+/// ).is_err());
+/// # Ok(())
+/// # }
+/// ```
+pub fn validate_source_target_different(source_url: &str, target_url: &str) -> Result<()> {
+    // Parse both URLs to extract components
+    let source_parts = parse_postgres_url(source_url)
+        .with_context(|| format!("Failed to parse source URL: {}", source_url))?;
+    let target_parts = parse_postgres_url(target_url)
+        .with_context(|| format!("Failed to parse target URL: {}", target_url))?;
+
+    // Compare normalized components
+    if source_parts.host == target_parts.host
+        && source_parts.port == target_parts.port
+        && source_parts.database == target_parts.database
+        && source_parts.user == target_parts.user
+    {
+        bail!(
+            "Source and target URLs point to the same database!\\n\\\n             \\n\\\n             This would cause DATA LOSS - the target would overwrite the source.\\n\\\n             \\n\\\n             Source: {}@{}:{}/{}\\n\\\n             Target: {}@{}:{}/{}\\n\\\n             \\n\\\n             Please ensure source and target are different databases.\\n\\\n             Common causes:\\n\\\n             - Copy-paste error in connection strings\\n\\\n             - Wrong environment variables (e.g., SOURCE_URL == TARGET_URL)\\n\\\n             - Typo in database name or host",
+            source_parts.user.as_deref().unwrap_or("(no user)"),
+            source_parts.host,
+            source_parts.port,
+            source_parts.database,
+            target_parts.user.as_deref().unwrap_or("(no user)"),
+            target_parts.host,
+            target_parts.port,
+            target_parts.database
+        );
+    }
+
+    Ok(())
+}
+
+/// Parse a PostgreSQL URL into its components
+///
+/// # Arguments
+///
+/// * `url` - PostgreSQL connection URL (postgres:// or postgresql://)
+///
+/// # Returns
+///
+/// Returns a `PostgresUrlParts` struct with normalized components.
+fn parse_postgres_url(url: &str) -> Result<PostgresUrlParts> {
+    // Remove scheme
+    let url_without_scheme = url
+        .trim_start_matches("postgres://")
+        .trim_start_matches("postgresql://");
+
+    // Split into base and query params (ignore query params for comparison)
+    let base = url_without_scheme
+        .split('?')
+        .next()
+        .unwrap_or(url_without_scheme);
+
+    // Parse: [user[:password]@]host[:port]/database
+    let (auth_and_host, database) = base
+        .rsplit_once('/')
+        .ok_or_else(|| anyhow::anyhow!("Missing database name in URL"))?;
+
+    // Parse authentication and host
+    let (user, host_and_port) = if let Some((auth, hp)) = auth_and_host.split_once('@') {
+        // Has authentication
+        let user = auth.split(':').next().unwrap_or(auth).to_string();
+        (Some(user), hp)
+    } else {
+        // No authentication
+        (None, auth_and_host)
+    };
+
+    // Parse host and port
+    let (host, port) = if let Some((h, p)) = host_and_port.rsplit_once(':') {
+        // Port specified
+        let port = p
+            .parse::<u16>()
+            .with_context(|| format!("Invalid port number: {}", p))?;
+        (h, port)
+    } else {
+        // Use default PostgreSQL port
+        (host_and_port, 5432)
+    };
+
+    Ok(PostgresUrlParts {
+        host: host.to_lowercase(), // Hostnames are case-insensitive
+        port,
+        database: database.to_string(), // Database names are case-sensitive in PostgreSQL
+        user,
+    })
+}
+
+/// Parsed components of a PostgreSQL connection URL
+#[derive(Debug, PartialEq)]
+struct PostgresUrlParts {
+    host: String,
+    port: u16,
+    database: String,
+    user: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +471,111 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(attempts, 3); // Initial + 2 retries
+    }
+
+    #[test]
+    fn test_validate_source_target_different_valid() {
+        // Different hosts
+        assert!(validate_source_target_different(
+            "postgresql://user:pass@source.com:5432/db",
+            "postgresql://user:pass@target.com:5432/db"
+        )
+        .is_ok());
+
+        // Different databases on same host
+        assert!(validate_source_target_different(
+            "postgresql://user:pass@host:5432/db1",
+            "postgresql://user:pass@host:5432/db2"
+        )
+        .is_ok());
+
+        // Different ports on same host
+        assert!(validate_source_target_different(
+            "postgresql://user:pass@host:5432/db",
+            "postgresql://user:pass@host:5433/db"
+        )
+        .is_ok());
+
+        // Different users on same host/db (edge case but allowed)
+        assert!(validate_source_target_different(
+            "postgresql://user1:pass@host:5432/db",
+            "postgresql://user2:pass@host:5432/db"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_validate_source_target_different_invalid() {
+        // Exact same URL
+        assert!(validate_source_target_different(
+            "postgresql://user:pass@host:5432/db",
+            "postgresql://user:pass@host:5432/db"
+        )
+        .is_err());
+
+        // Same URL with different scheme (postgres vs postgresql)
+        assert!(validate_source_target_different(
+            "postgres://user:pass@host:5432/db",
+            "postgresql://user:pass@host:5432/db"
+        )
+        .is_err());
+
+        // Same URL with default port vs explicit port
+        assert!(validate_source_target_different(
+            "postgresql://user:pass@host/db",
+            "postgresql://user:pass@host:5432/db"
+        )
+        .is_err());
+
+        // Same URL with different query parameters (still same database)
+        assert!(validate_source_target_different(
+            "postgresql://user:pass@host:5432/db?sslmode=require",
+            "postgresql://user:pass@host:5432/db?sslmode=prefer"
+        )
+        .is_err());
+
+        // Same host with different case (hostnames are case-insensitive)
+        assert!(validate_source_target_different(
+            "postgresql://user:pass@HOST.COM:5432/db",
+            "postgresql://user:pass@host.com:5432/db"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_parse_postgres_url() {
+        // Full URL with all components
+        let parts = parse_postgres_url("postgresql://myuser:mypass@localhost:5432/mydb").unwrap();
+        assert_eq!(parts.host, "localhost");
+        assert_eq!(parts.port, 5432);
+        assert_eq!(parts.database, "mydb");
+        assert_eq!(parts.user, Some("myuser".to_string()));
+
+        // URL without port (should default to 5432)
+        let parts = parse_postgres_url("postgresql://user@host/db").unwrap();
+        assert_eq!(parts.host, "host");
+        assert_eq!(parts.port, 5432);
+        assert_eq!(parts.database, "db");
+
+        // URL without authentication
+        let parts = parse_postgres_url("postgresql://host:5433/db").unwrap();
+        assert_eq!(parts.host, "host");
+        assert_eq!(parts.port, 5433);
+        assert_eq!(parts.database, "db");
+        assert_eq!(parts.user, None);
+
+        // URL with query parameters
+        let parts = parse_postgres_url("postgresql://user@host/db?sslmode=require").unwrap();
+        assert_eq!(parts.host, "host");
+        assert_eq!(parts.database, "db");
+
+        // URL with postgres:// scheme (alternative)
+        let parts = parse_postgres_url("postgres://user@host/db").unwrap();
+        assert_eq!(parts.host, "host");
+        assert_eq!(parts.database, "db");
+
+        // Host normalization (lowercase)
+        let parts = parse_postgres_url("postgresql://user@HOST.COM/db").unwrap();
+        assert_eq!(parts.host, "host.com");
     }
 }
