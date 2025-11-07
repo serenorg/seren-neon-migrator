@@ -44,6 +44,7 @@ use anyhow::{Context, Result};
 /// sync(
 ///     "postgresql://user:pass@neon.tech/sourcedb",
 ///     "postgresql://user:pass@seren.example.com/targetdb",
+///     None,  // No filter
 ///     None,  // Use default publication name
 ///     None,  // Use default subscription name
 ///     Some(600)  // 10 minute timeout

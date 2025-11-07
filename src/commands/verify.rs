@@ -42,7 +42,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 /// # async fn example() -> Result<()> {
 /// verify(
 ///     "postgresql://user:pass@neon.tech/sourcedb",
-///     "postgresql://user:pass@seren.example.com/targetdb"
+///     "postgresql://user:pass@seren.example.com/targetdb",
+///     None
 /// ).await?;
 /// # Ok(())
 /// # }

@@ -39,10 +39,12 @@ use anyhow::{bail, Context, Result};
 /// ```no_run
 /// # use anyhow::Result;
 /// # use postgres_seren_replicator::commands::validate;
+/// # use postgres_seren_replicator::filters::ReplicationFilter;
 /// # async fn example() -> Result<()> {
 /// validate(
 ///     "postgresql://user:pass@neon.tech/sourcedb",
-///     "postgresql://user:pass@seren.example.com/targetdb"
+///     "postgresql://user:pass@seren.example.com/targetdb",
+///     ReplicationFilter::empty()
 /// ).await?;
 /// # Ok(())
 /// # }

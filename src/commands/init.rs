@@ -43,11 +43,14 @@ use tempfile::TempDir;
 /// ```no_run
 /// # use anyhow::Result;
 /// # use postgres_seren_replicator::commands::init;
+/// # use postgres_seren_replicator::filters::ReplicationFilter;
 /// # async fn example() -> Result<()> {
 /// // With confirmation prompt
 /// init(
 ///     "postgresql://user:pass@neon.tech/sourcedb",
 ///     "postgresql://user:pass@seren.example.com/targetdb",
+///     false,
+///     ReplicationFilter::empty(),
 ///     false
 /// ).await?;
 ///
@@ -55,7 +58,9 @@ use tempfile::TempDir;
 /// init(
 ///     "postgresql://user:pass@neon.tech/sourcedb",
 ///     "postgresql://user:pass@seren.example.com/targetdb",
-///     true
+///     true,
+///     ReplicationFilter::empty(),
+///     false
 /// ).await?;
 /// # Ok(())
 /// # }
