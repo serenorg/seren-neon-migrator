@@ -1,6 +1,7 @@
 // ABOUTME: Sync command implementation - Phase 3 of migration
 // ABOUTME: Sets up logical replication between source and target databases
 
+use crate::migration;
 use crate::postgres::connect;
 use crate::replication::{create_publication, create_subscription, wait_for_sync};
 use anyhow::{Context, Result};
@@ -8,46 +9,69 @@ use anyhow::{Context, Result};
 /// Set up logical replication between source and target databases
 ///
 /// This command performs Phase 3 of the migration process:
-/// 1. Creates a publication on the source database for all tables
-/// 2. Creates a subscription on the target database pointing to the source
-/// 3. Waits for the initial sync to complete
+/// 1. Discovers all databases on the source
+/// 2. Filters databases based on the provided filter criteria
+/// 3. For each database:
+///    - Creates a publication on the source database (filtered tables if specified)
+///    - Creates a subscription on the target database pointing to the source
+///    - Waits for the initial sync to complete
 ///
-/// After this command succeeds, changes on the source will continuously
-/// replicate to the target until the subscription is dropped.
+/// After this command succeeds, changes on the source databases will continuously
+/// replicate to the target until the subscriptions are dropped.
 ///
 /// # Arguments
 ///
-/// * `source_url` - PostgreSQL connection string for source (Neon) database
+/// * `source_url` - PostgreSQL connection string for source database
 /// * `target_url` - PostgreSQL connection string for target (Seren) database
-/// * `publication_name` - Optional publication name (defaults to "seren_migration_pub")
-/// * `subscription_name` - Optional subscription name (defaults to "seren_migration_sub")
-/// * `sync_timeout_secs` - Optional timeout in seconds (defaults to 300)
+/// * `filter` - Optional replication filter for database and table selection
+/// * `publication_name` - Optional publication name template (defaults to "seren_migration_pub")
+/// * `subscription_name` - Optional subscription name template (defaults to "seren_migration_sub")
+/// * `sync_timeout_secs` - Optional timeout in seconds per database (defaults to 300)
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` if replication setup completes successfully.
+/// Returns `Ok(())` if replication setup completes successfully for all databases.
 ///
 /// # Errors
 ///
 /// This function will return an error if:
 /// - Cannot connect to source or target database
-/// - Publication creation fails
-/// - Subscription creation fails
-/// - Initial sync doesn't complete within timeout
+/// - Cannot discover databases on source
+/// - Publication creation fails for any database
+/// - Subscription creation fails for any database
+/// - Initial sync doesn't complete within timeout for any database
 ///
 /// # Examples
 ///
 /// ```no_run
 /// # use anyhow::Result;
 /// # use postgres_seren_replicator::commands::sync;
+/// # use postgres_seren_replicator::filters::ReplicationFilter;
 /// # async fn example() -> Result<()> {
+/// // Replicate all databases
 /// sync(
-///     "postgresql://user:pass@neon.tech/sourcedb",
-///     "postgresql://user:pass@seren.example.com/targetdb",
-///     None,  // No filter
+///     "postgresql://user:pass@source.example.com/postgres",
+///     "postgresql://user:pass@target.example.com/postgres",
+///     None,  // No filter - replicate all databases
 ///     None,  // Use default publication name
 ///     None,  // Use default subscription name
-///     Some(600)  // 10 minute timeout
+///     Some(600)  // 10 minute timeout per database
+/// ).await?;
+///
+/// // Replicate only specific databases
+/// let filter = ReplicationFilter::new(
+///     Some(vec!["mydb".to_string(), "analytics".to_string()]),
+///     None,
+///     None,
+///     None,
+/// )?;
+/// sync(
+///     "postgresql://user:pass@source.example.com/postgres",
+///     "postgresql://user:pass@target.example.com/postgres",
+///     Some(filter),
+///     None,
+///     None,
+///     Some(600)
 /// ).await?;
 /// # Ok(())
 /// # }
@@ -60,61 +84,151 @@ pub async fn sync(
     subscription_name: Option<&str>,
     sync_timeout_secs: Option<u64>,
 ) -> Result<()> {
-    let pub_name = publication_name.unwrap_or("seren_migration_pub");
-    let sub_name = subscription_name.unwrap_or("seren_migration_sub");
+    let pub_name_template = publication_name.unwrap_or("seren_migration_pub");
+    let sub_name_template = subscription_name.unwrap_or("seren_migration_sub");
     let timeout = sync_timeout_secs.unwrap_or(300); // 5 minutes default
     let filter = filter.unwrap_or_else(crate::filters::ReplicationFilter::empty);
 
     tracing::info!("Starting logical replication setup...");
-    tracing::info!("Publication: '{}'", pub_name);
-    tracing::info!("Subscription: '{}'", sub_name);
 
-    // Connect to source database
+    // Connect to source database to discover databases
     tracing::info!("Connecting to source database...");
     let source_client = connect(source_url)
         .await
         .context("Failed to connect to source database")?;
     tracing::info!("✓ Connected to source");
 
-    // Connect to target database
-    tracing::info!("Connecting to target database...");
-    let target_client = connect(target_url)
+    // Discover databases on source
+    tracing::info!("Discovering databases on source...");
+    let all_databases = migration::list_databases(&source_client)
         .await
-        .context("Failed to connect to target database")?;
-    tracing::info!("✓ Connected to target");
+        .context("Failed to list databases on source")?;
 
-    // Extract database name from source URL for filter context
-    let db_name = extract_database_from_url(source_url)
-        .context("Failed to extract database name from source URL")?;
+    // Apply filtering rules
+    let databases: Vec<_> = all_databases
+        .into_iter()
+        .filter(|db| filter.should_replicate_database(&db.name))
+        .collect();
 
-    // Create publication on source
-    tracing::info!("Creating publication on source database...");
-    create_publication(&source_client, &db_name, pub_name, &filter)
-        .await
-        .context("Failed to create publication on source")?;
+    if databases.is_empty() {
+        if filter.is_empty() {
+            tracing::warn!("⚠ No user databases found on source");
+            tracing::warn!("  This is unusual - the source database appears empty");
+            tracing::warn!("  Only template databases exist");
+        } else {
+            tracing::warn!("⚠ No databases matched the filter criteria");
+            tracing::warn!("  Check your --include-databases or --exclude-databases settings");
+        }
+        tracing::info!("✅ Logical replication setup complete (no databases to replicate)");
+        return Ok(());
+    }
 
-    // Create subscription on target
-    tracing::info!("Creating subscription on target database...");
-    create_subscription(&target_client, sub_name, source_url, pub_name)
-        .await
-        .context("Failed to create subscription on target")?;
-
-    // Wait for initial sync to complete
     tracing::info!(
-        "Waiting for initial sync to complete (timeout: {}s)...",
-        timeout
+        "Found {} database(s) to replicate: {}",
+        databases.len(),
+        databases
+            .iter()
+            .map(|db| db.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
-    wait_for_sync(&target_client, sub_name, timeout)
-        .await
-        .context("Failed to wait for initial sync")?;
+
+    // Set up replication for each database
+    for db in &databases {
+        tracing::info!("");
+        tracing::info!(
+            "========================================\nDatabase: '{}'\n========================================",
+            db.name
+        );
+
+        // Build database-specific connection URLs
+        let source_db_url = replace_database_in_url(source_url, &db.name).context(format!(
+            "Failed to build source URL for database '{}'",
+            db.name
+        ))?;
+        let target_db_url = replace_database_in_url(target_url, &db.name).context(format!(
+            "Failed to build target URL for database '{}'",
+            db.name
+        ))?;
+
+        // Build database-specific publication and subscription names
+        let pub_name = if databases.len() == 1 {
+            // Single database - use template name as-is
+            pub_name_template.to_string()
+        } else {
+            // Multiple databases - append database name to avoid conflicts
+            format!("{}_{}", pub_name_template, db.name)
+        };
+
+        let sub_name = if databases.len() == 1 {
+            // Single database - use template name as-is
+            sub_name_template.to_string()
+        } else {
+            // Multiple databases - append database name to avoid conflicts
+            format!("{}_{}", sub_name_template, db.name)
+        };
+
+        tracing::info!("Publication: '{}'", pub_name);
+        tracing::info!("Subscription: '{}'", sub_name);
+
+        // Connect to the specific database on source and target
+        tracing::info!("Connecting to source database '{}'...", db.name);
+        let source_db_client = connect(&source_db_url).await.context(format!(
+            "Failed to connect to source database '{}'",
+            db.name
+        ))?;
+        tracing::info!("✓ Connected to source");
+
+        tracing::info!("Connecting to target database '{}'...", db.name);
+        let target_db_client = connect(&target_db_url).await.context(format!(
+            "Failed to connect to target database '{}'",
+            db.name
+        ))?;
+        tracing::info!("✓ Connected to target");
+
+        // Create publication on source database
+        tracing::info!("Creating publication on source database...");
+        create_publication(&source_db_client, &db.name, &pub_name, &filter)
+            .await
+            .context(format!(
+                "Failed to create publication on source database '{}'",
+                db.name
+            ))?;
+
+        // Create subscription on target database
+        tracing::info!("Creating subscription on target database...");
+        create_subscription(&target_db_client, &sub_name, &source_db_url, &pub_name)
+            .await
+            .context(format!(
+                "Failed to create subscription on target database '{}'",
+                db.name
+            ))?;
+
+        // Wait for initial sync to complete
+        tracing::info!(
+            "Waiting for initial sync to complete (timeout: {}s)...",
+            timeout
+        );
+        wait_for_sync(&target_db_client, &sub_name, timeout)
+            .await
+            .context(format!(
+                "Failed to wait for initial sync on database '{}'",
+                db.name
+            ))?;
+
+        tracing::info!("✓ Replication active for database '{}'", db.name);
+    }
 
     tracing::info!("");
     tracing::info!("========================================");
     tracing::info!("✓ Logical replication is now active!");
     tracing::info!("========================================");
     tracing::info!("");
-    tracing::info!("Changes on the source database will now continuously");
-    tracing::info!("replicate to the target database.");
+    tracing::info!(
+        "Changes on {} source database(s) will now continuously",
+        databases.len()
+    );
+    tracing::info!("replicate to the target.");
     tracing::info!("");
     tracing::info!("Next steps:");
     tracing::info!("  1. Run 'status' to monitor replication lag");
@@ -124,27 +238,37 @@ pub async fn sync(
     Ok(())
 }
 
-/// Extract database name from a PostgreSQL connection URL
+/// Replace the database name in a PostgreSQL connection URL
 ///
 /// # Arguments
 ///
-/// * `url` - PostgreSQL connection URL (format: postgresql://user:pass@host:port/database?params)
+/// * `url` - PostgreSQL connection URL
+/// * `new_db_name` - New database name to use
 ///
 /// # Returns
 ///
-/// Database name extracted from the URL
-fn extract_database_from_url(url: &str) -> Result<String> {
-    // Split by '?' to remove query parameters
-    let base_url = url.split('?').next().unwrap_or(url);
+/// URL with the database name replaced
+fn replace_database_in_url(url: &str, new_db_name: &str) -> Result<String> {
+    // Split into base URL and query parameters
+    let parts: Vec<&str> = url.splitn(2, '?').collect();
+    let base_url = parts[0];
+    let query_params = parts.get(1);
 
-    // Split by '/' to get the database name (last part)
-    let parts: Vec<&str> = base_url.rsplitn(2, '/').collect();
+    // Split base URL by '/' to replace the database name
+    let url_parts: Vec<&str> = base_url.rsplitn(2, '/').collect();
 
-    if parts.is_empty() || parts[0].is_empty() {
-        anyhow::bail!("Invalid connection URL format: cannot extract database name");
+    if url_parts.len() != 2 {
+        anyhow::bail!("Invalid connection URL format: cannot replace database name");
     }
 
-    Ok(parts[0].to_string())
+    // Rebuild URL with new database name
+    let new_url = if let Some(params) = query_params {
+        format!("{}/{}?{}", url_parts[1], new_db_name, params)
+    } else {
+        format!("{}/{}", url_parts[1], new_db_name)
+    };
+
+    Ok(new_url)
 }
 
 #[cfg(test)]
@@ -226,6 +350,76 @@ mod tests {
             .unwrap();
 
         let source_client = connect(&source_url).await.unwrap();
+        crate::replication::drop_publication(&source_client, "seren_migration_pub")
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn test_replace_database_in_url() {
+        // Basic URL
+        let url = "postgresql://user:pass@localhost:5432/olddb";
+        let new_url = replace_database_in_url(url, "newdb").unwrap();
+        assert_eq!(new_url, "postgresql://user:pass@localhost:5432/newdb");
+
+        // URL with query parameters
+        let url = "postgresql://user:pass@localhost:5432/olddb?sslmode=require";
+        let new_url = replace_database_in_url(url, "newdb").unwrap();
+        assert_eq!(
+            new_url,
+            "postgresql://user:pass@localhost:5432/newdb?sslmode=require"
+        );
+
+        // URL without port
+        let url = "postgresql://user:pass@localhost/olddb";
+        let new_url = replace_database_in_url(url, "newdb").unwrap();
+        assert_eq!(new_url, "postgresql://user:pass@localhost/newdb");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_sync_with_database_filter() {
+        let source_url = std::env::var("TEST_SOURCE_URL").unwrap();
+        let target_url = std::env::var("TEST_TARGET_URL").unwrap();
+
+        println!("Testing sync command with database filter...");
+        println!("⚠ WARNING: This will set up replication for filtered databases!");
+
+        // Create filter that includes only specific database
+        let filter = crate::filters::ReplicationFilter::new(
+            Some(vec!["postgres".to_string()]), // Include only postgres database
+            None,
+            None,
+            None,
+        )
+        .expect("Failed to create filter");
+
+        let result = sync(&source_url, &target_url, Some(filter), None, None, Some(60)).await;
+
+        match &result {
+            Ok(_) => {
+                println!("✓ Sync with database filter completed successfully");
+            }
+            Err(e) => {
+                println!("Sync with database filter failed: {:?}", e);
+                if e.to_string().contains("not supported") || e.to_string().contains("permission") {
+                    println!("Skipping test - database might not support logical replication");
+                    return;
+                }
+            }
+        }
+
+        assert!(result.is_ok(), "Sync with database filter failed");
+
+        // Clean up - for single database, names don't have suffix
+        let db_url = replace_database_in_url(&target_url, "postgres").unwrap();
+        let target_client = connect(&db_url).await.unwrap();
+        crate::replication::drop_subscription(&target_client, "seren_migration_sub")
+            .await
+            .unwrap();
+
+        let source_url_db = replace_database_in_url(&source_url, "postgres").unwrap();
+        let source_client = connect(&source_url_db).await.unwrap();
         crate::replication::drop_publication(&source_client, "seren_migration_pub")
             .await
             .unwrap();
