@@ -215,57 +215,80 @@ pub async fn init(
         let source_db_url = replace_database_in_url(source_url, &db_info.name)?;
         let target_db_url = replace_database_in_url(target_url, &db_info.name)?;
 
-        // Handle database creation/existence
+        // Handle database creation atomically to avoid TOCTOU race condition
         let target_client = postgres::connect(target_url).await?;
-
-        // Check if database exists
-        if database_exists(&target_client, &db_info.name).await? {
-            tracing::info!("  Database '{}' already exists on target", db_info.name);
-
-            // Check if empty
-            if database_is_empty(target_url, &db_info.name).await? {
-                tracing::info!(
-                    "  Database '{}' is empty, proceeding with restore",
-                    db_info.name
-                );
-            } else {
-                // Database exists and has data
-                let should_drop = if drop_existing {
-                    // Auto-drop in automated mode with --drop-existing
-                    true
-                } else if skip_confirmation {
-                    // In automated mode without --drop-existing, fail
-                    bail!(
-                        "Database '{}' already exists and contains data. \
-                         Use --drop-existing to overwrite, or manually drop the database first.",
-                        db_info.name
-                    );
-                } else {
-                    // Interactive mode: prompt user
-                    prompt_drop_database(&db_info.name)?
-                };
-
-                if should_drop {
-                    drop_database_if_exists(&target_client, &db_info.name).await?;
-                    // Continue to create fresh database below
-                } else {
-                    bail!("Aborted: Database '{}' already exists", db_info.name);
-                }
-            }
-        }
 
         // Validate database name to prevent SQL injection
         crate::utils::validate_postgres_identifier(&db_info.name)
             .with_context(|| format!("Invalid database name: '{}'", db_info.name))?;
 
-        // Create database if it doesn't exist (or was just dropped)
-        if !database_exists(&target_client, &db_info.name).await? {
-            let create_query = format!("CREATE DATABASE \"{}\"", db_info.name);
-            target_client
-                .execute(&create_query, &[])
-                .await
-                .with_context(|| format!("Failed to create database '{}'", db_info.name))?;
-            tracing::info!("  Created database '{}'", db_info.name);
+        // Try to create database atomically (avoids TOCTOU vulnerability)
+        let create_query = format!("CREATE DATABASE \"{}\"", db_info.name);
+        match target_client.execute(&create_query, &[]).await {
+            Ok(_) => {
+                tracing::info!("  Created database '{}'", db_info.name);
+            }
+            Err(err) => {
+                // Check if error is "database already exists" (error code 42P04)
+                if let Some(db_error) = err.as_db_error() {
+                    if db_error.code() == &tokio_postgres::error::SqlState::DUPLICATE_DATABASE {
+                        // Database already exists - handle based on user preferences
+                        tracing::info!("  Database '{}' already exists on target", db_info.name);
+
+                        // Check if empty
+                        if database_is_empty(target_url, &db_info.name).await? {
+                            tracing::info!(
+                                "  Database '{}' is empty, proceeding with restore",
+                                db_info.name
+                            );
+                        } else {
+                            // Database exists and has data
+                            let should_drop = if drop_existing {
+                                // Auto-drop in automated mode with --drop-existing
+                                true
+                            } else if skip_confirmation {
+                                // In automated mode without --drop-existing, fail
+                                bail!(
+                                    "Database '{}' already exists and contains data. \
+                                     Use --drop-existing to overwrite, or manually drop the database first.",
+                                    db_info.name
+                                );
+                            } else {
+                                // Interactive mode: prompt user
+                                prompt_drop_database(&db_info.name)?
+                            };
+
+                            if should_drop {
+                                drop_database_if_exists(&target_client, &db_info.name).await?;
+
+                                // Recreate the database
+                                let create_query = format!("CREATE DATABASE \"{}\"", db_info.name);
+                                target_client
+                                    .execute(&create_query, &[])
+                                    .await
+                                    .with_context(|| {
+                                        format!(
+                                            "Failed to create database '{}' after drop",
+                                            db_info.name
+                                        )
+                                    })?;
+                                tracing::info!("  Created database '{}'", db_info.name);
+                            } else {
+                                bail!("Aborted: Database '{}' already exists", db_info.name);
+                            }
+                        }
+                    } else {
+                        // Some other database error - propagate it
+                        return Err(err).with_context(|| {
+                            format!("Failed to create database '{}'", db_info.name)
+                        });
+                    }
+                } else {
+                    // Not a database error - propagate it
+                    return Err(err)
+                        .with_context(|| format!("Failed to create database '{}'", db_info.name));
+                }
+            }
         }
 
         // Dump and restore schema
@@ -451,13 +474,6 @@ fn confirm_replication(sizes: &[migration::DatabaseSizeInfo]) -> Result<bool> {
     Ok(input.trim().to_lowercase() == "y")
 }
 
-/// Checks if a database exists on the target
-async fn database_exists(target_conn: &Client, db_name: &str) -> Result<bool> {
-    let query = "SELECT 1 FROM pg_database WHERE datname = $1";
-    let rows = target_conn.query(query, &[&db_name]).await?;
-    Ok(!rows.is_empty())
-}
-
 /// Checks if a database is empty (no user tables)
 async fn database_is_empty(target_url: &str, db_name: &str) -> Result<bool> {
     // Need to connect to the specific database to check tables
@@ -548,21 +564,6 @@ mod tests {
         let url_no_params = "postgresql://user:pass@host:5432/olddb";
         let result = replace_database_in_url(url_no_params, "newdb").unwrap();
         assert_eq!(result, "postgresql://user:pass@host:5432/newdb");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_database_exists() {
-        let url = std::env::var("TEST_TARGET_URL").expect("TEST_TARGET_URL not set");
-        let client = postgres::connect(&url).await.unwrap();
-
-        // postgres database should always exist
-        assert!(database_exists(&client, "postgres").await.unwrap());
-
-        // non-existent database should not exist
-        assert!(!database_exists(&client, "nonexistent_db_test_12345")
-            .await
-            .unwrap());
     }
 
     #[tokio::test]
