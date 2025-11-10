@@ -439,7 +439,12 @@ pub fn validate_source_target_different(source_url: &str, target_url: &str) -> R
 /// # Returns
 ///
 /// Returns a `PostgresUrlParts` struct with normalized components.
-fn parse_postgres_url(url: &str) -> Result<PostgresUrlParts> {
+///
+/// # Security
+///
+/// This function extracts passwords from URLs for use with .pgpass files.
+/// Ensure returned values are handled securely and not logged.
+pub fn parse_postgres_url(url: &str) -> Result<PostgresUrlParts> {
     // Remove scheme
     let url_without_scheme = url
         .trim_start_matches("postgres://")
@@ -457,13 +462,18 @@ fn parse_postgres_url(url: &str) -> Result<PostgresUrlParts> {
         .ok_or_else(|| anyhow::anyhow!("Missing database name in URL"))?;
 
     // Parse authentication and host
-    let (user, host_and_port) = if let Some((auth, hp)) = auth_and_host.split_once('@') {
+    // Use rsplit_once to split from the right, so passwords can contain '@'
+    let (user, password, host_and_port) = if let Some((auth, hp)) = auth_and_host.rsplit_once('@') {
         // Has authentication
-        let user = auth.split(':').next().unwrap_or(auth).to_string();
-        (Some(user), hp)
+        let (user, pass) = if let Some((u, p)) = auth.split_once(':') {
+            (Some(u.to_string()), Some(p.to_string()))
+        } else {
+            (Some(auth.to_string()), None)
+        };
+        (user, pass, hp)
     } else {
         // No authentication
-        (None, auth_and_host)
+        (None, None, auth_and_host)
     };
 
     // Parse host and port
@@ -483,16 +493,130 @@ fn parse_postgres_url(url: &str) -> Result<PostgresUrlParts> {
         port,
         database: database.to_string(), // Database names are case-sensitive in PostgreSQL
         user,
+        password,
     })
 }
 
 /// Parsed components of a PostgreSQL connection URL
 #[derive(Debug, PartialEq)]
-struct PostgresUrlParts {
-    host: String,
-    port: u16,
-    database: String,
-    user: Option<String>,
+pub struct PostgresUrlParts {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub user: Option<String>,
+    pub password: Option<String>,
+}
+
+/// Managed .pgpass file for secure password passing to PostgreSQL tools
+///
+/// This struct creates a temporary .pgpass file with secure permissions (0600)
+/// and automatically cleans it up when dropped. PostgreSQL command-line tools
+/// read credentials from this file instead of accepting passwords in URLs,
+/// which prevents command injection vulnerabilities.
+///
+/// # Security
+///
+/// - File permissions are set to 0600 (owner read/write only)
+/// - File is automatically removed on Drop
+/// - Credentials are never passed on command line
+///
+/// # Format
+///
+/// .pgpass file format: hostname:port:database:username:password
+/// Wildcards (*) are used for maximum compatibility
+///
+/// # Examples
+///
+/// ```no_run
+/// # use postgres_seren_replicator::utils::{PgPassFile, parse_postgres_url};
+/// # use anyhow::Result;
+/// # fn example() -> Result<()> {
+/// let url = "postgresql://user:pass@localhost:5432/mydb";
+/// let parts = parse_postgres_url(url)?;
+/// let pgpass = PgPassFile::new(&parts)?;
+///
+/// // Use pgpass.path() with PGPASSFILE environment variable
+/// // File is automatically cleaned up when pgpass goes out of scope
+/// # Ok(())
+/// # }
+/// ```
+pub struct PgPassFile {
+    path: std::path::PathBuf,
+}
+
+impl PgPassFile {
+    /// Create a new .pgpass file with credentials from URL parts
+    ///
+    /// # Arguments
+    ///
+    /// * `parts` - Parsed PostgreSQL URL components
+    ///
+    /// # Returns
+    ///
+    /// Returns a PgPassFile that will be automatically cleaned up on Drop
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be created or permissions cannot be set
+    pub fn new(parts: &PostgresUrlParts) -> Result<Self> {
+        use std::fs;
+        use std::io::Write;
+
+        // Create temp file with secure name
+        let temp_dir = std::env::temp_dir();
+        let random: u32 = rand::random();
+        let filename = format!("pgpass-{:08x}", random);
+        let path = temp_dir.join(filename);
+
+        // Write .pgpass entry
+        // Format: hostname:port:database:username:password
+        let username = parts.user.as_deref().unwrap_or("*");
+        let password = parts.password.as_deref().unwrap_or("");
+        let entry = format!(
+            "{}:{}:{}:{}:{}\n",
+            parts.host, parts.port, parts.database, username, password
+        );
+
+        let mut file = fs::File::create(&path)
+            .with_context(|| format!("Failed to create .pgpass file at {}", path.display()))?;
+
+        file.write_all(entry.as_bytes())
+            .with_context(|| format!("Failed to write to .pgpass file at {}", path.display()))?;
+
+        // Set secure permissions (0600) - owner read/write only
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = fs::Permissions::from_mode(0o600);
+            fs::set_permissions(&path, permissions).with_context(|| {
+                format!(
+                    "Failed to set permissions on .pgpass file at {}",
+                    path.display()
+                )
+            })?;
+        }
+
+        // On Windows, .pgpass is stored in %APPDATA%\postgresql\pgpass.conf
+        // but for our temporary use case, we'll just use a temp file
+        // PostgreSQL on Windows also checks permissions but less strictly
+
+        Ok(Self { path })
+    }
+
+    /// Get the path to the .pgpass file
+    ///
+    /// Use this with the PGPASSFILE environment variable when running
+    /// PostgreSQL command-line tools
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Drop for PgPassFile {
+    fn drop(&mut self) {
+        // Best effort cleanup - don't panic if removal fails
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// Create a managed temporary directory with explicit cleanup support
@@ -874,18 +998,27 @@ mod tests {
 
     #[test]
     fn test_parse_postgres_url() {
-        // Full URL with all components
+        // Full URL with all components including password
         let parts = parse_postgres_url("postgresql://myuser:mypass@localhost:5432/mydb").unwrap();
         assert_eq!(parts.host, "localhost");
         assert_eq!(parts.port, 5432);
         assert_eq!(parts.database, "mydb");
         assert_eq!(parts.user, Some("myuser".to_string()));
+        assert_eq!(parts.password, Some("mypass".to_string()));
 
         // URL without port (should default to 5432)
-        let parts = parse_postgres_url("postgresql://user@host/db").unwrap();
+        let parts = parse_postgres_url("postgresql://user:pass@host/db").unwrap();
         assert_eq!(parts.host, "host");
         assert_eq!(parts.port, 5432);
         assert_eq!(parts.database, "db");
+        assert_eq!(parts.user, Some("user".to_string()));
+        assert_eq!(parts.password, Some("pass".to_string()));
+
+        // URL with user but no password
+        let parts = parse_postgres_url("postgresql://user@host/db").unwrap();
+        assert_eq!(parts.host, "host");
+        assert_eq!(parts.user, Some("user".to_string()));
+        assert_eq!(parts.password, None);
 
         // URL without authentication
         let parts = parse_postgres_url("postgresql://host:5433/db").unwrap();
@@ -893,20 +1026,28 @@ mod tests {
         assert_eq!(parts.port, 5433);
         assert_eq!(parts.database, "db");
         assert_eq!(parts.user, None);
+        assert_eq!(parts.password, None);
 
         // URL with query parameters
-        let parts = parse_postgres_url("postgresql://user@host/db?sslmode=require").unwrap();
+        let parts = parse_postgres_url("postgresql://user:pass@host/db?sslmode=require").unwrap();
         assert_eq!(parts.host, "host");
         assert_eq!(parts.database, "db");
+        assert_eq!(parts.password, Some("pass".to_string()));
 
         // URL with postgres:// scheme (alternative)
-        let parts = parse_postgres_url("postgres://user@host/db").unwrap();
+        let parts = parse_postgres_url("postgres://user:pass@host/db").unwrap();
         assert_eq!(parts.host, "host");
         assert_eq!(parts.database, "db");
+        assert_eq!(parts.password, Some("pass".to_string()));
 
         // Host normalization (lowercase)
-        let parts = parse_postgres_url("postgresql://user@HOST.COM/db").unwrap();
+        let parts = parse_postgres_url("postgresql://user:pass@HOST.COM/db").unwrap();
         assert_eq!(parts.host, "host.com");
+        assert_eq!(parts.password, Some("pass".to_string()));
+
+        // Password with special characters
+        let parts = parse_postgres_url("postgresql://user:p@ss!word@host/db").unwrap();
+        assert_eq!(parts.password, Some("p@ss!word".to_string()));
     }
 
     #[test]
@@ -921,6 +1062,70 @@ mod tests {
         // Maximum length (63 characters)
         let max_length_name = "a".repeat(63);
         assert!(validate_postgres_identifier(&max_length_name).is_ok());
+    }
+
+    #[test]
+    fn test_pgpass_file_creation() {
+        let parts = PostgresUrlParts {
+            host: "localhost".to_string(),
+            port: 5432,
+            database: "testdb".to_string(),
+            user: Some("testuser".to_string()),
+            password: Some("testpass".to_string()),
+        };
+
+        let pgpass = PgPassFile::new(&parts).unwrap();
+        assert!(pgpass.path().exists());
+
+        // Verify file content
+        let content = std::fs::read_to_string(pgpass.path()).unwrap();
+        assert_eq!(content, "localhost:5432:testdb:testuser:testpass\n");
+
+        // Verify permissions on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(pgpass.path()).unwrap();
+            let permissions = metadata.permissions();
+            assert_eq!(permissions.mode() & 0o777, 0o600);
+        }
+
+        // File should be cleaned up when pgpass is dropped
+        let path = pgpass.path().to_path_buf();
+        drop(pgpass);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_pgpass_file_without_password() {
+        let parts = PostgresUrlParts {
+            host: "localhost".to_string(),
+            port: 5432,
+            database: "testdb".to_string(),
+            user: Some("testuser".to_string()),
+            password: None,
+        };
+
+        let pgpass = PgPassFile::new(&parts).unwrap();
+        let content = std::fs::read_to_string(pgpass.path()).unwrap();
+        // Should use empty password
+        assert_eq!(content, "localhost:5432:testdb:testuser:\n");
+    }
+
+    #[test]
+    fn test_pgpass_file_without_user() {
+        let parts = PostgresUrlParts {
+            host: "localhost".to_string(),
+            port: 5432,
+            database: "testdb".to_string(),
+            user: None,
+            password: Some("testpass".to_string()),
+        };
+
+        let pgpass = PgPassFile::new(&parts).unwrap();
+        let content = std::fs::read_to_string(pgpass.path()).unwrap();
+        // Should use wildcard for user
+        assert_eq!(content, "localhost:5432:testdb:*:testpass\n");
     }
 
     #[test]

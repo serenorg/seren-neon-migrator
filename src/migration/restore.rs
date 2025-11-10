@@ -8,20 +8,37 @@ use std::process::{Command, Stdio};
 pub async fn restore_globals(target_url: &str, input_path: &str) -> Result<()> {
     tracing::info!("Restoring global objects from {}", input_path);
 
-    let status = Command::new("psql")
-        .arg(format!("--dbname={}", target_url))
+    // Parse URL and create .pgpass file for secure authentication
+    let parts = crate::utils::parse_postgres_url(target_url)
+        .with_context(|| format!("Failed to parse target URL: {}", target_url))?;
+    let pgpass = crate::utils::PgPassFile::new(&parts)
+        .context("Failed to create .pgpass file for authentication")?;
+
+    let mut cmd = Command::new("psql");
+    cmd.arg("--host")
+        .arg(&parts.host)
+        .arg("--port")
+        .arg(parts.port.to_string())
+        .arg("--dbname")
+        .arg(&parts.database)
         .arg(format!("--file={}", input_path))
         .arg("--quiet")
+        .env("PGPASSFILE", pgpass.path())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .context(
-            "Failed to execute psql. Is PostgreSQL client installed?\n\
-             Install with:\n\
-             - Ubuntu/Debian: sudo apt-get install postgresql-client\n\
-             - macOS: brew install postgresql\n\
-             - RHEL/CentOS: sudo yum install postgresql",
-        )?;
+        .stderr(Stdio::inherit());
+
+    // Add username if specified
+    if let Some(user) = &parts.user {
+        cmd.arg("--username").arg(user);
+    }
+
+    let status = cmd.status().context(
+        "Failed to execute psql. Is PostgreSQL client installed?\n\
+         Install with:\n\
+         - Ubuntu/Debian: sudo apt-get install postgresql-client\n\
+         - macOS: brew install postgresql\n\
+         - RHEL/CentOS: sudo yum install postgresql",
+    )?;
 
     if !status.success() {
         tracing::warn!("⚠ Some global object restoration warnings occurred");
@@ -36,20 +53,37 @@ pub async fn restore_globals(target_url: &str, input_path: &str) -> Result<()> {
 pub async fn restore_schema(target_url: &str, input_path: &str) -> Result<()> {
     tracing::info!("Restoring schema from {}", input_path);
 
-    let status = Command::new("psql")
-        .arg(format!("--dbname={}", target_url))
+    // Parse URL and create .pgpass file for secure authentication
+    let parts = crate::utils::parse_postgres_url(target_url)
+        .with_context(|| format!("Failed to parse target URL: {}", target_url))?;
+    let pgpass = crate::utils::PgPassFile::new(&parts)
+        .context("Failed to create .pgpass file for authentication")?;
+
+    let mut cmd = Command::new("psql");
+    cmd.arg("--host")
+        .arg(&parts.host)
+        .arg("--port")
+        .arg(parts.port.to_string())
+        .arg("--dbname")
+        .arg(&parts.database)
         .arg(format!("--file={}", input_path))
         .arg("--quiet")
+        .env("PGPASSFILE", pgpass.path())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .context(
-            "Failed to execute psql. Is PostgreSQL client installed?\n\
-             Install with:\n\
-             - Ubuntu/Debian: sudo apt-get install postgresql-client\n\
-             - macOS: brew install postgresql\n\
-             - RHEL/CentOS: sudo yum install postgresql",
-        )?;
+        .stderr(Stdio::inherit());
+
+    // Add username if specified
+    if let Some(user) = &parts.user {
+        cmd.arg("--username").arg(user);
+    }
+
+    let status = cmd.status().context(
+        "Failed to execute psql. Is PostgreSQL client installed?\n\
+         Install with:\n\
+         - Ubuntu/Debian: sudo apt-get install postgresql-client\n\
+         - macOS: brew install postgresql\n\
+         - RHEL/CentOS: sudo yum install postgresql",
+    )?;
 
     if !status.success() {
         bail!(
@@ -88,24 +122,41 @@ pub async fn restore_data(target_url: &str, input_path: &str) -> Result<()> {
         num_cpus
     );
 
-    let status = Command::new("pg_restore")
-        .arg("--data-only")
+    // Parse URL and create .pgpass file for secure authentication
+    let parts = crate::utils::parse_postgres_url(target_url)
+        .with_context(|| format!("Failed to parse target URL: {}", target_url))?;
+    let pgpass = crate::utils::PgPassFile::new(&parts)
+        .context("Failed to create .pgpass file for authentication")?;
+
+    let mut cmd = Command::new("pg_restore");
+    cmd.arg("--data-only")
         .arg("--no-owner")
         .arg(format!("--jobs={}", num_cpus)) // Parallel restore jobs
-        .arg(format!("--dbname={}", target_url))
+        .arg("--host")
+        .arg(&parts.host)
+        .arg("--port")
+        .arg(parts.port.to_string())
+        .arg("--dbname")
+        .arg(&parts.database)
         .arg("--format=directory") // Directory format
         .arg("--verbose") // Show progress
         .arg(input_path)
+        .env("PGPASSFILE", pgpass.path())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .context(
-            "Failed to execute pg_restore. Is PostgreSQL client installed?\n\
-             Install with:\n\
-             - Ubuntu/Debian: sudo apt-get install postgresql-client\n\
-             - macOS: brew install postgresql\n\
-             - RHEL/CentOS: sudo yum install postgresql",
-        )?;
+        .stderr(Stdio::inherit());
+
+    // Add username if specified
+    if let Some(user) = &parts.user {
+        cmd.arg("--username").arg(user);
+    }
+
+    let status = cmd.status().context(
+        "Failed to execute pg_restore. Is PostgreSQL client installed?\n\
+         Install with:\n\
+         - Ubuntu/Debian: sudo apt-get install postgresql-client\n\
+         - macOS: brew install postgresql\n\
+         - RHEL/CentOS: sudo yum install postgresql",
+    )?;
 
     if !status.success() {
         bail!(

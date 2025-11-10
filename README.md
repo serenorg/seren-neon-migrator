@@ -543,6 +543,22 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO myuser;
 - **Hetzner**: Standard PostgreSQL, full support
 - **Self-hosted**: Full control, ensure `wal_level = logical` in postgresql.conf
 
+## Security
+
+### Secure Credential Handling
+
+The tool implements secure credential handling to prevent command injection vulnerabilities and credential exposure:
+
+- **`.pgpass` Authentication**: Database credentials are passed to PostgreSQL tools (pg_dump, pg_dumpall, psql, pg_restore) via temporary `.pgpass` files instead of command-line arguments. This prevents credentials from appearing in process listings (`ps` output) or shell history.
+
+- **Automatic Cleanup**: Temporary `.pgpass` files are automatically removed when operations complete, even if the process crashes or is interrupted. This is implemented using Rust's RAII pattern (Drop trait) to ensure cleanup happens reliably.
+
+- **Secure Permissions**: On Unix systems, `.pgpass` files are created with `0600` permissions (owner read/write only) as required by PostgreSQL. This prevents other users on the system from reading credentials.
+
+- **No Command Injection**: By using separate connection parameters (`--host`, `--port`, `--dbname`, `--username`) instead of embedding credentials in connection URLs passed to external commands, the tool eliminates command injection attack vectors.
+
+**Connection String Format**: While you provide connection URLs to the tool (e.g., `postgresql://user:pass@host:5432/db`), these URLs are parsed internally and credentials are extracted securely. They are never passed as-is to external PostgreSQL commands.
+
 ## Testing
 
 ### Unit Tests

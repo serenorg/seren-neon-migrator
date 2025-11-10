@@ -10,21 +10,38 @@ use std::process::{Command, Stdio};
 pub async fn dump_globals(source_url: &str, output_path: &str) -> Result<()> {
     tracing::info!("Dumping global objects to {}", output_path);
 
-    let status = Command::new("pg_dumpall")
-        .arg("--globals-only")
+    // Parse URL and create .pgpass file for secure authentication
+    let parts = crate::utils::parse_postgres_url(source_url)
+        .with_context(|| format!("Failed to parse source URL: {}", source_url))?;
+    let pgpass = crate::utils::PgPassFile::new(&parts)
+        .context("Failed to create .pgpass file for authentication")?;
+
+    let mut cmd = Command::new("pg_dumpall");
+    cmd.arg("--globals-only")
         .arg("--no-role-passwords") // Don't dump passwords
-        .arg(format!("--dbname={}", source_url))
+        .arg("--host")
+        .arg(&parts.host)
+        .arg("--port")
+        .arg(parts.port.to_string())
+        .arg("--dbname")
+        .arg(&parts.database)
         .arg(format!("--file={}", output_path))
+        .env("PGPASSFILE", pgpass.path())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .context(
-            "Failed to execute pg_dumpall. Is PostgreSQL client installed?\n\
-             Install with:\n\
-             - Ubuntu/Debian: sudo apt-get install postgresql-client\n\
-             - macOS: brew install postgresql\n\
-             - RHEL/CentOS: sudo yum install postgresql",
-        )?;
+        .stderr(Stdio::inherit());
+
+    // Add username if specified
+    if let Some(user) = &parts.user {
+        cmd.arg("--username").arg(user);
+    }
+
+    let status = cmd.status().context(
+        "Failed to execute pg_dumpall. Is PostgreSQL client installed?\n\
+         Install with:\n\
+         - Ubuntu/Debian: sudo apt-get install postgresql-client\n\
+         - macOS: brew install postgresql\n\
+         - RHEL/CentOS: sudo yum install postgresql",
+    )?;
 
     if !status.success() {
         bail!(
@@ -55,6 +72,12 @@ pub async fn dump_schema(
         output_path
     );
 
+    // Parse URL and create .pgpass file for secure authentication
+    let parts = crate::utils::parse_postgres_url(source_url)
+        .with_context(|| format!("Failed to parse source URL: {}", source_url))?;
+    let pgpass = crate::utils::PgPassFile::new(&parts)
+        .context("Failed to create .pgpass file for authentication")?;
+
     let mut cmd = Command::new("pg_dump");
     cmd.arg("--schema-only")
         .arg("--no-owner") // Don't include ownership commands
@@ -78,10 +101,21 @@ pub async fn dump_schema(
         }
     }
 
-    cmd.arg(format!("--dbname={}", source_url))
+    cmd.arg("--host")
+        .arg(&parts.host)
+        .arg("--port")
+        .arg(parts.port.to_string())
+        .arg("--dbname")
+        .arg(&parts.database)
         .arg(format!("--file={}", output_path))
+        .env("PGPASSFILE", pgpass.path())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+
+    // Add username if specified
+    if let Some(user) = &parts.user {
+        cmd.arg("--username").arg(user);
+    }
 
     let status = cmd.status().context(
         "Failed to execute pg_dump. Is PostgreSQL client installed?\n\
@@ -135,6 +169,12 @@ pub async fn dump_data(
         num_cpus
     );
 
+    // Parse URL and create .pgpass file for secure authentication
+    let parts = crate::utils::parse_postgres_url(source_url)
+        .with_context(|| format!("Failed to parse source URL: {}", source_url))?;
+    let pgpass = crate::utils::PgPassFile::new(&parts)
+        .context("Failed to create .pgpass file for authentication")?;
+
     let mut cmd = Command::new("pg_dump");
     cmd.arg("--data-only")
         .arg("--no-owner")
@@ -161,10 +201,21 @@ pub async fn dump_data(
         }
     }
 
-    cmd.arg(format!("--dbname={}", source_url))
+    cmd.arg("--host")
+        .arg(&parts.host)
+        .arg("--port")
+        .arg(parts.port.to_string())
+        .arg("--dbname")
+        .arg(&parts.database)
         .arg(format!("--file={}", output_path))
+        .env("PGPASSFILE", pgpass.path())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+
+    // Add username if specified
+    if let Some(user) = &parts.user {
+        cmd.arg("--username").arg(user);
+    }
 
     let status = cmd.status().context(
         "Failed to execute pg_dump. Is PostgreSQL client installed?\n\
