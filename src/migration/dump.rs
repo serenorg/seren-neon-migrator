@@ -23,7 +23,7 @@ pub async fn dump_globals(source_url: &str, output_path: &str) -> Result<()> {
         .arg(&parts.host)
         .arg("--port")
         .arg(parts.port.to_string())
-        .arg("--dbname")
+        .arg("--database")
         .arg(&parts.database)
         .arg(format!("--file={}", output_path))
         .env("PGPASSFILE", pgpass.path())
@@ -33,6 +33,11 @@ pub async fn dump_globals(source_url: &str, output_path: &str) -> Result<()> {
     // Add username if specified
     if let Some(user) = &parts.user {
         cmd.arg("--username").arg(user);
+    }
+
+    // Apply query parameters as environment variables (SSL, channel_binding, etc.)
+    for (env_var, value) in parts.to_pg_env_vars() {
+        cmd.env(env_var, value);
     }
 
     let status = cmd.status().context(
@@ -115,6 +120,11 @@ pub async fn dump_schema(
     // Add username if specified
     if let Some(user) = &parts.user {
         cmd.arg("--username").arg(user);
+    }
+
+    // Apply query parameters as environment variables (SSL, channel_binding, etc.)
+    for (env_var, value) in parts.to_pg_env_vars() {
+        cmd.env(env_var, value);
     }
 
     let status = cmd.status().context(
@@ -215,6 +225,11 @@ pub async fn dump_data(
     // Add username if specified
     if let Some(user) = &parts.user {
         cmd.arg("--username").arg(user);
+    }
+
+    // Apply query parameters as environment variables (SSL, channel_binding, etc.)
+    for (env_var, value) in parts.to_pg_env_vars() {
+        cmd.env(env_var, value);
     }
 
     let status = cmd.status().context(
