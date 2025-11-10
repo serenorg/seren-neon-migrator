@@ -1,18 +1,25 @@
 // ABOUTME: Interactive terminal UI for database and table selection
-// ABOUTME: Provides multi-select interface for selective replication
+// ABOUTME: Provides multi-select interface for selective replication and table rules
 
-use crate::{filters::ReplicationFilter, migration, postgres};
+use crate::{
+    filters::ReplicationFilter,
+    migration, postgres,
+    table_rules::{QualifiedTable, TableRules},
+};
 use anyhow::{Context, Result};
-use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
+use dialoguer::{theme::ColorfulTheme, Confirm, Input, MultiSelect};
 
-/// Interactive database and table selection
+/// Interactive database and table selection with advanced filtering
 ///
 /// Presents a terminal UI for selecting:
 /// 1. Which databases to replicate (multi-select)
-/// 2. For each selected database, which tables to exclude (multi-select)
+/// 2. For each selected database:
+///    - Which tables to exclude entirely
+///    - Which tables to replicate schema-only (no data)
+///    - Which tables to apply time-based filters
 /// 3. Summary and confirmation
 ///
-/// Returns a `ReplicationFilter` representing the user's selections.
+/// Returns a tuple of `(ReplicationFilter, TableRules)` representing the user's selections.
 ///
 /// # Arguments
 ///
@@ -20,7 +27,7 @@ use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
 ///
 /// # Returns
 ///
-/// Returns `Ok(ReplicationFilter)` with the user's selections or an error if:
+/// Returns `Ok((ReplicationFilter, TableRules))` with the user's selections or an error if:
 /// - Cannot connect to source database
 /// - Cannot discover databases or tables
 /// - User cancels the operation
@@ -31,13 +38,15 @@ use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
 /// # use anyhow::Result;
 /// # use postgres_seren_replicator::interactive::select_databases_and_tables;
 /// # async fn example() -> Result<()> {
-/// let filter = select_databases_and_tables(
+/// let (filter, rules) = select_databases_and_tables(
 ///     "postgresql://user:pass@source.example.com/postgres"
 /// ).await?;
 /// # Ok(())
 /// # }
 /// ```
-pub async fn select_databases_and_tables(source_url: &str) -> Result<ReplicationFilter> {
+pub async fn select_databases_and_tables(
+    source_url: &str,
+) -> Result<(ReplicationFilter, TableRules)> {
     tracing::info!("Starting interactive database and table selection...");
     tracing::info!("");
 
@@ -58,7 +67,7 @@ pub async fn select_databases_and_tables(source_url: &str) -> Result<Replication
     if all_databases.is_empty() {
         tracing::warn!("⚠ No user databases found on source");
         tracing::warn!("  Source appears to contain only template databases");
-        return Ok(ReplicationFilter::empty());
+        return Ok((ReplicationFilter::empty(), TableRules::default()));
     }
 
     tracing::info!("✓ Found {} database(s)", all_databases.len());
@@ -79,7 +88,7 @@ pub async fn select_databases_and_tables(source_url: &str) -> Result<Replication
     if db_selections.is_empty() {
         tracing::warn!("⚠ No databases selected");
         tracing::info!("  Cancelling interactive selection");
-        return Ok(ReplicationFilter::empty());
+        return Ok((ReplicationFilter::empty(), TableRules::default()));
     }
 
     let selected_databases: Vec<String> = db_selections
@@ -94,8 +103,9 @@ pub async fn select_databases_and_tables(source_url: &str) -> Result<Replication
     }
     tracing::info!("");
 
-    // Step 2: For each selected database, optionally exclude tables
+    // Step 2: For each selected database, configure table-level rules
     let mut excluded_tables: Vec<String> = Vec::new();
+    let mut table_rules = TableRules::default();
 
     for db_name in &selected_databases {
         // Build database-specific connection URL
@@ -148,6 +158,10 @@ pub async fn select_databases_and_tables(source_url: &str) -> Result<Replication
                 db_name
             ))?;
 
+        // Track which tables are excluded
+        let excluded_indices: std::collections::HashSet<usize> =
+            table_exclusions.iter().copied().collect();
+
         if !table_exclusions.is_empty() {
             let excluded_in_db: Vec<String> = table_exclusions
                 .iter()
@@ -174,6 +188,135 @@ pub async fn select_databases_and_tables(source_url: &str) -> Result<Replication
         }
 
         tracing::info!("");
+
+        // Step 2a: Select tables for schema-only replication (from non-excluded tables)
+        let remaining_tables: Vec<(usize, String)> = table_display_names
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| !excluded_indices.contains(idx))
+            .map(|(idx, name)| (idx, name.clone()))
+            .collect();
+
+        if !remaining_tables.is_empty() {
+            let remaining_names: Vec<String> = remaining_tables
+                .iter()
+                .map(|(_, name)| name.clone())
+                .collect();
+
+            println!(
+                "Select tables to replicate SCHEMA-ONLY (no data) from '{}' (or press Enter to skip):",
+                db_name
+            );
+            println!("(Use arrow keys to navigate, Space to select, Enter to confirm)");
+            println!();
+
+            let schema_only_selections = MultiSelect::with_theme(&ColorfulTheme::default())
+                .items(&remaining_names)
+                .interact()
+                .context(format!(
+                    "Failed to get schema-only selection for database '{}'",
+                    db_name
+                ))?;
+
+            if !schema_only_selections.is_empty() {
+                tracing::info!("");
+                tracing::info!(
+                    "✓ Schema-only replication for {} table(s) from '{}':",
+                    schema_only_selections.len(),
+                    db_name
+                );
+
+                for &selection_idx in &schema_only_selections {
+                    let (original_idx, display_name) = &remaining_tables[selection_idx];
+                    let table_info = &all_tables[*original_idx];
+
+                    tracing::info!("  - {}", display_name);
+
+                    // Add to table rules
+                    let qualified = QualifiedTable::new(
+                        Some(db_name.clone()),
+                        table_info.schema.clone(),
+                        table_info.name.clone(),
+                    );
+                    table_rules.add_schema_only_table(qualified)?;
+                }
+            }
+
+            tracing::info!("");
+
+            // Step 2b: Configure time filters for remaining tables (not excluded, not schema-only)
+            let schema_only_indices: std::collections::HashSet<usize> = schema_only_selections
+                .iter()
+                .map(|&sel_idx| remaining_tables[sel_idx].0)
+                .collect();
+
+            let tables_for_time_filter: Vec<(usize, String)> = remaining_tables
+                .iter()
+                .filter(|(idx, _)| !schema_only_indices.contains(idx))
+                .cloned()
+                .collect();
+
+            if !tables_for_time_filter.is_empty() {
+                let confirm_time_filters = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt(format!(
+                        "Configure time-based filters for tables in '{}'?",
+                        db_name
+                    ))
+                    .default(false)
+                    .interact()
+                    .context("Failed to get time filter confirmation")?;
+
+                if confirm_time_filters {
+                    tracing::info!("");
+                    tracing::info!("Configuring time filters for '{}'...", db_name);
+
+                    for (original_idx, display_name) in &tables_for_time_filter {
+                        let table_info = &all_tables[*original_idx];
+
+                        let apply_filter = Confirm::with_theme(&ColorfulTheme::default())
+                            .with_prompt(format!("Apply time filter to '{}'?", display_name))
+                            .default(false)
+                            .interact()
+                            .context("Failed to get time filter confirmation")?;
+
+                        if apply_filter {
+                            // Prompt for column name
+                            let column: String = Input::with_theme(&ColorfulTheme::default())
+                                .with_prompt("  Timestamp column name")
+                                .default("created_at".to_string())
+                                .interact_text()
+                                .context("Failed to get column name")?;
+
+                            // Prompt for time window
+                            let window: String = Input::with_theme(&ColorfulTheme::default())
+                                .with_prompt(
+                                    "  Time window (e.g., '2 months', '90 days', '1 year')",
+                                )
+                                .default("2 months".to_string())
+                                .interact_text()
+                                .context("Failed to get time window")?;
+
+                            tracing::info!(
+                                "  ✓ Time filter for '{}': {} >= NOW() - INTERVAL '{}'",
+                                display_name,
+                                column,
+                                window
+                            );
+
+                            // Add to table rules
+                            let qualified = QualifiedTable::new(
+                                Some(db_name.clone()),
+                                table_info.schema.clone(),
+                                table_info.name.clone(),
+                            );
+                            table_rules.add_time_filter(qualified, column, window)?;
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::info!("");
     }
 
     // Step 3: Show summary and confirm
@@ -194,8 +337,44 @@ pub async fn select_databases_and_tables(source_url: &str) -> Result<Replication
             println!("  ✗ {}", table);
         }
         println!();
-    } else {
-        println!("Tables to exclude: None (all tables will be replicated)");
+    }
+
+    // Show schema-only tables
+    let mut schema_only_count = 0;
+    for db in &selected_databases {
+        schema_only_count += table_rules.schema_only_tables(db).len();
+    }
+    if schema_only_count > 0 {
+        println!(
+            "Schema-only tables (DDL only, no data): {}",
+            schema_only_count
+        );
+        for db in &selected_databases {
+            let schema_only = table_rules.schema_only_tables(db);
+            if !schema_only.is_empty() {
+                for table in schema_only {
+                    println!("  📋 {}.{}", db, table);
+                }
+            }
+        }
+        println!();
+    }
+
+    // Show time filters
+    let mut time_filter_count = 0;
+    for db in &selected_databases {
+        time_filter_count += table_rules.predicate_tables(db).len();
+    }
+    if time_filter_count > 0 {
+        println!("Tables with time-based filters: {}", time_filter_count);
+        for db in &selected_databases {
+            let predicate_tables = table_rules.predicate_tables(db);
+            if !predicate_tables.is_empty() {
+                for (table, predicate) in predicate_tables {
+                    println!("  🕒 {}.{} [{}]", db, table, predicate);
+                }
+            }
+        }
         println!();
     }
 
@@ -226,7 +405,7 @@ pub async fn select_databases_and_tables(source_url: &str) -> Result<Replication
         ReplicationFilter::new(Some(selected_databases), None, None, Some(excluded_tables))?
     };
 
-    Ok(filter)
+    Ok((filter, table_rules))
 }
 
 /// Replace the database name in a PostgreSQL connection URL
@@ -297,9 +476,10 @@ mod tests {
 
         // This will only work with manual interaction
         match &result {
-            Ok(filter) => {
+            Ok((filter, rules)) => {
                 println!("✓ Interactive selection completed");
                 println!("Filter: {:?}", filter);
+                println!("Rules: {:?}", rules);
             }
             Err(e) => {
                 println!("Interactive selection error: {:?}", e);

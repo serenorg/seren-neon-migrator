@@ -180,7 +180,10 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let filter = if !no_interactive {
                 // Interactive mode (default) - prompt user to select databases and tables
-                postgres_seren_replicator::interactive::select_databases_and_tables(&source).await?
+                let (filter, rules) =
+                    postgres_seren_replicator::interactive::select_databases_and_tables(&source)
+                        .await?;
+                filter.with_table_rules(rules)
             } else {
                 // CLI mode - use provided filter arguments
                 postgres_seren_replicator::filters::ReplicationFilter::new(
@@ -210,18 +213,21 @@ async fn main() -> anyhow::Result<()> {
             // (--yes implies automation, so it disables interactive mode)
             let filter = if !no_interactive && !yes {
                 // Interactive mode (default) - prompt user to select databases and tables
-                postgres_seren_replicator::interactive::select_databases_and_tables(&source).await?
+                let (filter, rules) =
+                    postgres_seren_replicator::interactive::select_databases_and_tables(&source)
+                        .await?;
+                filter.with_table_rules(rules)
             } else {
                 // CLI mode - use provided filter arguments
-                postgres_seren_replicator::filters::ReplicationFilter::new(
+                let filter = postgres_seren_replicator::filters::ReplicationFilter::new(
                     include_databases,
                     exclude_databases,
                     include_tables,
                     exclude_tables,
-                )?
+                )?;
+                let table_rule_data = build_table_rules(&table_rules)?;
+                filter.with_table_rules(table_rule_data)
             };
-            let table_rule_data = build_table_rules(&table_rules)?;
-            let filter = filter.with_table_rules(table_rule_data);
             let enable_sync = !no_sync; // Invert the flag: by default sync is enabled
             commands::init(
                 &source,
@@ -247,18 +253,21 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let filter = if !no_interactive {
                 // Interactive mode (default) - prompt user to select databases and tables
-                postgres_seren_replicator::interactive::select_databases_and_tables(&source).await?
+                let (filter, rules) =
+                    postgres_seren_replicator::interactive::select_databases_and_tables(&source)
+                        .await?;
+                filter.with_table_rules(rules)
             } else {
                 // CLI mode - use provided filter arguments
-                postgres_seren_replicator::filters::ReplicationFilter::new(
+                let filter = postgres_seren_replicator::filters::ReplicationFilter::new(
                     include_databases,
                     exclude_databases,
                     include_tables,
                     exclude_tables,
-                )?
+                )?;
+                let table_rule_data = build_table_rules(&table_rules)?;
+                filter.with_table_rules(table_rule_data)
             };
-            let table_rule_data = build_table_rules(&table_rules)?;
-            let filter = filter.with_table_rules(table_rule_data);
             commands::sync(&source, &target, Some(filter), None, None, None, force).await
         }
         Commands::Status {
