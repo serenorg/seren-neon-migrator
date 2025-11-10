@@ -23,7 +23,7 @@ pub async fn dump_globals(source_url: &str, output_path: &str) -> Result<()> {
         .arg(&parts.host)
         .arg("--port")
         .arg(parts.port.to_string())
-        .arg("--dbname")
+        .arg("--database")
         .arg(&parts.database)
         .arg(format!("--file={}", output_path))
         .env("PGPASSFILE", pgpass.path())
