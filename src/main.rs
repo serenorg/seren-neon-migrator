@@ -7,6 +7,7 @@ use postgres_seren_replicator::commands;
 #[derive(Parser)]
 #[command(name = "postgres-seren-replicator")]
 #[command(about = "Zero-downtime PostgreSQL replication to Seren Cloud", long_about = None)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
