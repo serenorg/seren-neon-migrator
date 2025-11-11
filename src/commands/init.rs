@@ -147,19 +147,44 @@ pub async fn init(
     let mut checkpoint_state = if allow_resume {
         match checkpoint::InitCheckpoint::load(&checkpoint_path)? {
             Some(existing) => {
-                existing
-                    .validate(&checkpoint_metadata, &database_names)
-                    .context("Checkpoint metadata mismatch")?;
-                if existing.completed_count() > 0 {
-                    tracing::info!(
-                        "Resume checkpoint found: {}/{} databases already replicated",
-                        existing.completed_count(),
-                        existing.total_databases()
-                    );
-                } else {
-                    tracing::info!("Resume checkpoint found but no databases marked complete yet");
+                // Try to validate the checkpoint
+                match existing.validate(&checkpoint_metadata, &database_names) {
+                    Ok(()) => {
+                        // Validation succeeded - resume from checkpoint
+                        if existing.completed_count() > 0 {
+                            tracing::info!(
+                                "Resume checkpoint found: {}/{} databases already replicated",
+                                existing.completed_count(),
+                                existing.total_databases()
+                            );
+                        } else {
+                            tracing::info!(
+                                "Resume checkpoint found but no databases marked complete yet"
+                            );
+                        }
+                        existing
+                    }
+                    Err(e) => {
+                        // Validation failed - log warning and start fresh
+                        tracing::warn!("⚠ Checkpoint metadata mismatch detected:");
+                        tracing::warn!(
+                            "  Previous run configuration differs from current configuration"
+                        );
+                        tracing::warn!("  - Schema-only tables may have changed");
+                        tracing::warn!("  - Time filters may have changed");
+                        tracing::warn!("  - Table selection may have changed");
+                        tracing::warn!("  Error: {}", e);
+                        tracing::info!("");
+                        tracing::info!(
+                            "✓ Automatically discarding old checkpoint and starting fresh"
+                        );
+                        checkpoint::remove_checkpoint(&checkpoint_path)?;
+                        checkpoint::InitCheckpoint::new(
+                            checkpoint_metadata.clone(),
+                            &database_names,
+                        )
+                    }
                 }
-                existing
             }
             None => checkpoint::InitCheckpoint::new(checkpoint_metadata.clone(), &database_names),
         }
