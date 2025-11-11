@@ -10,4 +10,6 @@ pub use extensions::{
     get_available_extensions, get_installed_extensions, get_preloaded_libraries, requires_preload,
     AvailableExtension, Extension,
 };
-pub use privileges::{check_source_privileges, check_target_privileges, PrivilegeCheck};
+pub use privileges::{
+    check_source_privileges, check_target_privileges, check_wal_level, PrivilegeCheck,
+};

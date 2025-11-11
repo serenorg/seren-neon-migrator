@@ -378,8 +378,32 @@ pub async fn init(
 
     tracing::info!("✅ Initial replication complete");
 
-    // Set up continuous logical replication if enabled
+    // Check wal_level before attempting to set up sync
+    let mut should_enable_sync = enable_sync;
     if enable_sync {
+        tracing::info!("Checking target wal_level for logical replication...");
+        let target_client = postgres::connect(target_url).await?;
+        let target_wal_level = postgres::check_wal_level(&target_client).await?;
+
+        if target_wal_level != "logical" {
+            tracing::warn!("");
+            tracing::warn!("⚠ Target database wal_level is set to '{}', but 'logical' is required for continuous sync", target_wal_level);
+            tracing::warn!("  Continuous replication (subscriptions) cannot be set up");
+            tracing::warn!("");
+            tracing::warn!("  To fix this:");
+            tracing::warn!("    1. Edit postgresql.conf: wal_level = logical");
+            tracing::warn!("    2. Restart PostgreSQL server");
+            tracing::warn!(
+                "    3. Run: postgres-seren-replicator sync --source <url> --target <url>"
+            );
+            tracing::warn!("");
+            tracing::info!("✓ Continuing with snapshot-only replication (sync disabled)");
+            should_enable_sync = false;
+        }
+    }
+
+    // Set up continuous logical replication if enabled
+    if should_enable_sync {
         tracing::info!("");
         tracing::info!("========================================");
         tracing::info!("Step 5/5: Setting up continuous replication...");

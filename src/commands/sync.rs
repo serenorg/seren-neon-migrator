@@ -106,6 +106,33 @@ pub async fn sync(
         .context("Source and target validation failed")?;
     tracing::info!("✓ Verified source and target are different databases");
 
+    // Check target wal_level before attempting logical replication
+    tracing::info!("Checking target wal_level for logical replication...");
+    let target_client = connect(target_url)
+        .await
+        .context("Failed to connect to target database")?;
+    let target_wal_level = crate::postgres::check_wal_level(&target_client).await?;
+
+    if target_wal_level != "logical" {
+        anyhow::bail!(
+            "Target database wal_level is set to '{}', but 'logical' is required for logical replication\n\
+             \n\
+             To fix this:\n\
+             \n\
+             Option 1: Set wal_level in postgresql.conf\n\
+               1. Edit postgresql.conf: wal_level = logical\n\
+               2. Restart PostgreSQL server\n\
+               3. Re-run this command\n\
+             \n\
+             Option 2: Skip continuous sync (snapshot only)\n\
+               Use the init command with --no-sync flag to perform initial snapshot without setting up logical replication\n\
+             \n\
+             Note: Some managed PostgreSQL services may require configuring wal_level through their control panel.",
+            target_wal_level
+        );
+    }
+    tracing::info!("✓ Target wal_level is set to 'logical' (logical replication supported)");
+
     // Connect to source database to discover databases
     tracing::info!("Connecting to source database...");
     let source_client = connect(source_url)

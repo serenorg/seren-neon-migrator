@@ -102,6 +102,45 @@ pub async fn check_target_privileges(client: &Client) -> Result<PrivilegeCheck> 
     check_source_privileges(client).await
 }
 
+/// Check the wal_level setting on the target database
+///
+/// Queries the current `wal_level` configuration parameter.
+/// For logical replication (subscriptions), `wal_level` must be set to `logical`.
+///
+/// # Arguments
+///
+/// * `client` - Connected PostgreSQL client
+///
+/// # Returns
+///
+/// Returns the current `wal_level` setting as a String (e.g., "replica", "logical").
+///
+/// # Errors
+///
+/// This function will return an error if the database query fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use postgres_seren_replicator::postgres::{connect, check_wal_level};
+/// # async fn example() -> Result<()> {
+/// let client = connect("postgresql://user:pass@localhost:5432/mydb").await?;
+/// let wal_level = check_wal_level(&client).await?;
+/// assert_eq!(wal_level, "logical");
+/// # Ok(())
+/// # }
+/// ```
+pub async fn check_wal_level(client: &Client) -> Result<String> {
+    let row = client
+        .query_one("SHOW wal_level", &[])
+        .await
+        .context("Failed to query wal_level setting")?;
+
+    let wal_level: String = row.get(0);
+    Ok(wal_level)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -170,6 +170,20 @@ pub async fn validate(
     }
     tracing::info!("✓ Target has sufficient privileges");
 
+    // Step 5a: Check target wal_level for logical replication
+    tracing::info!("Checking target wal_level setting...");
+    let target_wal_level = postgres::check_wal_level(&target_client).await?;
+    if target_wal_level == "logical" {
+        tracing::info!("✓ Target wal_level is set to 'logical' (logical replication supported)");
+    } else {
+        tracing::warn!(
+            "⚠ Target wal_level is set to '{}', but 'logical' is required for continuous sync",
+            target_wal_level
+        );
+        tracing::warn!("  Continuous replication (subscriptions) will not be possible");
+        tracing::warn!("  You can still perform initial snapshot replication");
+    }
+
     // Step 6: Check PostgreSQL versions
     tracing::info!("Checking PostgreSQL versions...");
     let source_version = get_pg_version(&source_client).await?;
