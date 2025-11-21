@@ -25,6 +25,7 @@ WORKER_INSTANCE_TYPE = os.environ.get('WORKER_INSTANCE_TYPE', 'c5.2xlarge')
 WORKER_IAM_ROLE = os.environ.get('WORKER_IAM_ROLE', 'seren-replication-worker')
 KMS_KEY_ID = os.environ.get('KMS_KEY_ID')
 API_KEY_PARAMETER_NAME = os.environ.get('API_KEY_PARAMETER_NAME')
+MAX_CONCURRENT_JOBS = int(os.environ.get('MAX_CONCURRENT_JOBS', '10'))
 
 # Cache for API key (loaded once per Lambda container lifecycle)
 _api_key_cache = None
@@ -167,8 +168,39 @@ def lambda_handler(event, context):
         }
 
 
+def count_active_jobs():
+    """Count jobs in provisioning or running state"""
+    try:
+        response = dynamodb.scan(
+            TableName=DYNAMODB_TABLE,
+            FilterExpression='#status IN (:provisioning, :running)',
+            ExpressionAttributeNames={'#status': 'status'},
+            ExpressionAttributeValues={
+                ':provisioning': {'S': 'provisioning'},
+                ':running': {'S': 'running'}
+            },
+            Select='COUNT'
+        )
+        return response['Count']
+    except Exception as e:
+        print(f"Failed to count active jobs: {e}")
+        # Return 0 on error to allow job submission (fail open)
+        return 0
+
+
 def handle_submit_job(event):
     """Handle POST /jobs - submit new replication job"""
+
+    # Check concurrent job limit
+    active_jobs = count_active_jobs()
+    if active_jobs >= MAX_CONCURRENT_JOBS:
+        print(f"Job submission rejected: {active_jobs} active jobs (limit: {MAX_CONCURRENT_JOBS})")
+        return {
+            'statusCode': 429,  # Too Many Requests
+            'body': json.dumps({
+                'error': f'Maximum concurrent jobs limit reached ({MAX_CONCURRENT_JOBS}). Please try again later.'
+            })
+        }
 
     # Parse request body
     try:
