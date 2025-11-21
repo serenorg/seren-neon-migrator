@@ -98,6 +98,12 @@ enum Commands {
                 .unwrap_or_else(|_| "https://api.seren.cloud/replication".to_string())
         )]
         remote_api: String,
+        /// EC2 instance type for remote worker (e.g., t3.medium, c5.2xlarge, c5.4xlarge)
+        #[arg(long, default_value = "c5.2xlarge")]
+        worker_instance_type: String,
+        /// Maximum job duration in seconds before timeout (default: 28800 = 8 hours)
+        #[arg(long, default_value_t = 28800)]
+        job_timeout: u64,
     },
     /// Set up continuous logical replication from source to target
     Sync {
@@ -221,6 +227,8 @@ async fn main() -> anyhow::Result<()> {
             no_resume,
             remote,
             remote_api,
+            worker_instance_type,
+            job_timeout,
         } => {
             // Remote execution path
             if remote {
@@ -235,6 +243,8 @@ async fn main() -> anyhow::Result<()> {
                     drop_existing,
                     no_sync,
                     remote_api,
+                    worker_instance_type,
+                    job_timeout,
                 )
                 .await;
             }
@@ -346,6 +356,8 @@ async fn init_remote(
     drop_existing: bool,
     no_sync: bool,
     remote_api: String,
+    worker_instance_type: String,
+    job_timeout: u64,
 ) -> anyhow::Result<()> {
     use postgres_seren_replicator::remote::{FilterSpec, JobSpec, RemoteClient};
     use std::collections::HashMap;
@@ -374,6 +386,14 @@ async fn init_remote(
     );
     options.insert("yes".to_string(), serde_json::Value::Bool(yes));
     options.insert("enable_sync".to_string(), serde_json::Value::Bool(!no_sync));
+    options.insert(
+        "worker_instance_type".to_string(),
+        serde_json::Value::String(worker_instance_type),
+    );
+    options.insert(
+        "job_timeout".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(job_timeout)),
+    );
 
     let job_spec = JobSpec {
         version: "1".to_string(),

@@ -233,7 +233,7 @@ def handle_submit_job(event):
 
     # Provision EC2 instance (passes only job_id, not credentials)
     try:
-        instance_id = provision_worker(job_id)
+        instance_id = provision_worker(job_id, body.get('options', {}))
 
         # Update job with instance ID
         dynamodb.update_item(
@@ -272,12 +272,18 @@ def handle_submit_job(event):
     }
 
 
-def provision_worker(job_id):
+def provision_worker(job_id, options=None):
     """Provision EC2 instance to run replication job
 
     Security: Only passes job_id to worker, not credentials.
     Worker fetches and decrypts credentials from DynamoDB.
     """
+    if options is None:
+        options = {}
+
+    # Get instance type from options, fall back to environment variable
+    instance_type = options.get('worker_instance_type', WORKER_INSTANCE_TYPE)
+    print(f"Provisioning {instance_type} instance for job {job_id}")
 
     # Build user data script - only passes job_id
     user_data = f"""#!/bin/bash
@@ -291,7 +297,7 @@ set -euo pipefail
     # Launch instance
     response = ec2.run_instances(
         ImageId=WORKER_AMI_ID,
-        InstanceType=WORKER_INSTANCE_TYPE,
+        InstanceType=instance_type,
         MinCount=1,
         MaxCount=1,
         IamInstanceProfile={'Name': WORKER_IAM_ROLE},
