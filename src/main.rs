@@ -92,7 +92,11 @@ enum Commands {
         #[arg(long)]
         remote: bool,
         /// API endpoint for remote execution (defaults to Seren's API)
-        #[arg(long, default_value = "https://api.seren.cloud/replication")]
+        #[arg(
+            long,
+            default_value_t = std::env::var("SEREN_REMOTE_API")
+                .unwrap_or_else(|_| "https://api.seren.cloud/replication".to_string())
+        )]
         remote_api: String,
     },
     /// Set up continuous logical replication from source to target
