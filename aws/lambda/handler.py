@@ -133,6 +133,33 @@ def redact_url(url):
         return "[invalid URL]"
 
 
+def choose_instance_type(estimated_size_bytes):
+    """Choose EC2 instance type based on database size
+
+    Cost optimization for SerenAI-managed infrastructure:
+    - Small (<10GB): t3.medium (~$0.04/hr) - 2 vCPU, 4GB RAM
+    - Medium (10-100GB): c5.large (~$0.085/hr) - 2 vCPU, 4GB RAM, compute-optimized
+    - Large (100GB-1TB): c5.2xlarge (~$0.34/hr) - 8 vCPU, 16GB RAM
+    - Very large (>1TB): c5.4xlarge (~$0.68/hr) - 16 vCPU, 32GB RAM
+
+    Args:
+        estimated_size_bytes: Total size of databases to replicate in bytes
+
+    Returns:
+        EC2 instance type string (e.g., 't3.medium', 'c5.2xlarge')
+    """
+    size_gb = estimated_size_bytes / (1024**3)
+
+    if size_gb < 10:
+        return 't3.medium'
+    elif size_gb < 100:
+        return 'c5.large'
+    elif size_gb < 1024:
+        return 'c5.2xlarge'
+    else:
+        return 'c5.4xlarge'
+
+
 def lambda_handler(event, context):
     """Main Lambda handler - routes requests to appropriate handler"""
 
@@ -362,8 +389,17 @@ def provision_worker(job_id, options=None):
     if options is None:
         options = {}
 
-    # Get instance type from options, fall back to environment variable
-    instance_type = options.get('worker_instance_type', WORKER_INSTANCE_TYPE)
+    # Automatically choose instance type based on database size
+    estimated_size = options.get('estimated_size_bytes', 0)
+    if estimated_size > 0:
+        instance_type = choose_instance_type(estimated_size)
+        size_gb = estimated_size / (1024**3)
+        print(f"Database size: {size_gb:.1f} GB, automatically selected instance type: {instance_type}")
+    else:
+        # No size estimate provided, fall back to environment variable default
+        instance_type = WORKER_INSTANCE_TYPE
+        print(f"No size estimate provided, using default instance type: {instance_type}")
+
     print(f"Provisioning {instance_type} instance for job {job_id}")
 
     # Build user data script - only passes job_id
