@@ -8,6 +8,7 @@ pub mod filters;
 pub mod interactive;
 pub mod jsonb;
 pub mod migration;
+pub mod mongodb;
 pub mod postgres;
 pub mod remote;
 pub mod replication;
