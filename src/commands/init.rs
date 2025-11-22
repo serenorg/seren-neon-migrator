@@ -86,6 +86,44 @@ pub async fn init(
 ) -> Result<()> {
     tracing::info!("Starting initial replication...");
 
+    // Detect source database type and route to appropriate implementation
+    let source_type =
+        crate::detect_source_type(source_url).context("Failed to detect source database type")?;
+
+    match source_type {
+        crate::SourceType::PostgreSQL => {
+            // PostgreSQL to PostgreSQL replication (existing logic below)
+            tracing::info!("Source type: PostgreSQL");
+        }
+        crate::SourceType::SQLite => {
+            // SQLite to PostgreSQL migration (simpler path)
+            tracing::info!("Source type: SQLite");
+
+            // SQLite migrations don't support PostgreSQL-specific features
+            if !filter.is_empty() {
+                tracing::warn!(
+                    "⚠ Filters are not supported for SQLite sources (all tables will be migrated)"
+                );
+            }
+            if drop_existing {
+                tracing::warn!("⚠ --drop-existing flag is not applicable for SQLite sources");
+            }
+            if !enable_sync {
+                tracing::warn!(
+                    "⚠ SQLite sources don't support continuous replication (one-time migration only)"
+                );
+            }
+
+            return init_sqlite_to_postgres(source_url, target_url).await;
+        }
+        crate::SourceType::MongoDB => {
+            bail!("MongoDB sources are not yet supported. Coming in Phase 2.");
+        }
+        crate::SourceType::MySQL => {
+            bail!("MySQL sources are not yet supported. Coming in Phase 3.");
+        }
+    }
+
     // CRITICAL: Ensure source and target are different to prevent data loss
     crate::utils::validate_source_target_different(source_url, target_url)
         .context("Source and target validation failed")?;
@@ -599,6 +637,130 @@ async fn drop_database_if_exists(target_conn: &Client, db_name: &str) -> Result<
         .with_context(|| format!("Failed to drop database '{}'", db_name))?;
 
     tracing::info!("  ✓ Database '{}' dropped", db_name);
+    Ok(())
+}
+
+/// Initial replication from SQLite to PostgreSQL
+///
+/// Performs one-time migration of SQLite database to PostgreSQL target using JSONB storage:
+/// 1. Validates SQLite file exists and is readable
+/// 2. Validates PostgreSQL target connection
+/// 3. Lists all tables from SQLite database
+/// 4. For each table:
+///    - Converts rows to JSONB format
+///    - Creates JSONB table in PostgreSQL
+///    - Batch inserts all data
+///
+/// All SQLite data is stored as JSONB with metadata:
+/// - id: Original row ID (from ID column or row number)
+/// - data: Complete row as JSON object
+/// - _source_type: "sqlite"
+/// - _migrated_at: Timestamp of migration
+///
+/// # Arguments
+///
+/// * `sqlite_path` - Path to SQLite database file (.db, .sqlite, or .sqlite3)
+/// * `target_url` - PostgreSQL connection string for target (Seren) database
+///
+/// # Returns
+///
+/// Returns `Ok(())` if migration completes successfully.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - SQLite file doesn't exist or isn't readable
+/// - Cannot connect to target PostgreSQL database
+/// - Table conversion fails
+/// - Database creation or insert operations fail
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use postgres_seren_replicator::commands::init::init_sqlite_to_postgres;
+/// # async fn example() -> Result<()> {
+/// init_sqlite_to_postgres(
+///     "database.db",
+///     "postgresql://user:pass@seren.example.com/targetdb"
+/// ).await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn init_sqlite_to_postgres(sqlite_path: &str, target_url: &str) -> Result<()> {
+    tracing::info!("Starting SQLite to PostgreSQL migration...");
+
+    // Step 1: Validate SQLite file
+    tracing::info!("Step 1/4: Validating SQLite database...");
+    let canonical_path = crate::sqlite::validate_sqlite_path(sqlite_path)
+        .context("SQLite file validation failed")?;
+    tracing::info!("  ✓ SQLite file validated: {}", canonical_path.display());
+
+    // Step 2: Open SQLite connection (read-only)
+    tracing::info!("Step 2/4: Opening SQLite database...");
+    let sqlite_conn =
+        crate::sqlite::open_sqlite(sqlite_path).context("Failed to open SQLite database")?;
+    tracing::info!("  ✓ SQLite database opened (read-only mode)");
+
+    // Step 3: List all tables
+    tracing::info!("Step 3/4: Discovering tables...");
+    let tables = crate::sqlite::reader::list_tables(&sqlite_conn)
+        .context("Failed to list tables from SQLite database")?;
+
+    if tables.is_empty() {
+        tracing::warn!("⚠ No tables found in SQLite database");
+        tracing::info!("✅ Migration complete (no tables to migrate)");
+        return Ok(());
+    }
+
+    tracing::info!("Found {} table(s) to migrate", tables.len());
+
+    // Connect to PostgreSQL target
+    let target_client = postgres::connect_with_retry(target_url).await?;
+    tracing::info!("  ✓ Connected to PostgreSQL target");
+
+    // Step 4: Migrate each table
+    tracing::info!("Step 4/4: Migrating tables...");
+    for (idx, table_name) in tables.iter().enumerate() {
+        tracing::info!(
+            "Migrating table {}/{}: '{}'",
+            idx + 1,
+            tables.len(),
+            table_name
+        );
+
+        // Convert SQLite table to JSONB
+        let rows = crate::sqlite::converter::convert_table_to_jsonb(&sqlite_conn, table_name)
+            .with_context(|| format!("Failed to convert table '{}' to JSONB", table_name))?;
+
+        tracing::info!("  ✓ Converted {} rows from '{}'", rows.len(), table_name);
+
+        // Create JSONB table in PostgreSQL
+        crate::jsonb::writer::create_jsonb_table(&target_client, table_name, "sqlite")
+            .await
+            .with_context(|| format!("Failed to create JSONB table '{}'", table_name))?;
+
+        tracing::info!("  ✓ Created JSONB table '{}' in PostgreSQL", table_name);
+
+        if !rows.is_empty() {
+            // Batch insert all rows
+            crate::jsonb::writer::insert_jsonb_batch(&target_client, table_name, rows, "sqlite")
+                .await
+                .with_context(|| format!("Failed to insert data into table '{}'", table_name))?;
+
+            tracing::info!("  ✓ Inserted all rows into '{}'", table_name);
+        } else {
+            tracing::info!("  ✓ Table '{}' is empty (no rows to insert)", table_name);
+        }
+    }
+
+    tracing::info!("✅ SQLite to PostgreSQL migration complete!");
+    tracing::info!(
+        "   Migrated {} table(s) from '{}' to PostgreSQL",
+        tables.len(),
+        sqlite_path
+    );
+
     Ok(())
 }
 
