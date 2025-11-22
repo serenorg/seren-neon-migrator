@@ -43,6 +43,19 @@ The replication process follows 5 phases:
 - PostgreSQL client tools (pg_dump, pg_dumpall, psql)
 - Access to both source and target databases with appropriate permissions
 
+### Target Database Setup (Optional)
+
+**SerenDB Account**: If you want to replicate to SerenDB, you can create a free account at <https://console.serendb.com/signup>. This will provide you with a managed PostgreSQL database optimized for your workload.
+
+**Note**: SerenDB is completely optional. This tool works with any PostgreSQL-compatible database as your target, including:
+
+- SerenDB (managed PostgreSQL)
+- AWS RDS PostgreSQL
+- Self-hosted PostgreSQL
+- Neon, Supabase, or any other PostgreSQL provider
+
+You only need a SerenDB account if you specifically want to use SerenDB as your replication target.
+
 ### Download Pre-built Binaries
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/serenorg/postgres-seren-replicator/releases/latest):
